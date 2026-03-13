@@ -1,0 +1,18 @@
+flowchart LR
+    A[Camera Node A] --> B[Local MediaPipe Inference]
+    C[Camera Node B] --> D[Local MediaPipe Inference]
+
+    B --> E[Timestamped Landmark Stream]
+    D --> F[Timestamped Landmark Stream]
+
+    E --> G[Clock Sync and Frame Matching]
+    F --> G
+
+    G --> H[Confidence-Weighted DLT Triangulation]
+    H --> I[Reprojection Error Gating]
+    I --> J[Tiered Fallback: Monocular and Occlusion Hold]
+
+    J --> K[3D Skeleton]
+    K --> L[Kinematics Engine]
+    L --> M[Joint Angles, Velocities, Accelerations]
+    M --> N[Database and Report Generator]
