@@ -45,10 +45,18 @@ The repository now includes a 4-layer self-aware persistence architecture with o
 
 ## Typical Workflow
 
-1. Capture a session from GUI.
-2. Validate:
+1. Capture a session from the GUI or run a recording through the offline verifier.
+2. For video-based checks, export an annotated copy first:
+   - `python tools/process_video.py --input <VIDEO> --output <ANNOTATED_VIDEO>`
+3. Validate the session database:
    - `python tools/validate_session.py --session <SESSION_ID> --threshold 2.0`
-3. Compare:
+4. Compare derived metrics:
    - `python tools/compare_angles.py --session <SESSION_ID> --format all`
-4. Export:
+5. Export the validation artifacts:
    - `python tools/export_validation_artifacts.py --session <SESSION_ID> --include-all`
+
+## Current capture modes
+
+- Live webcam capture: `python launch_multi_camera.py --mode single --camera-source 0`
+- Phone/IP stream: `python launch_multi_camera.py --mode single --camera-source http://<PHONE_IP>:8080/video`
+- Offline replay: `python launch_multi_camera.py --mode single --camera-source path/to/video.mp4`

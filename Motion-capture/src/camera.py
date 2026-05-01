@@ -1,17 +1,19 @@
 import cv2
 import threading
 import time
-from config import CAMERA_ID, FRAME_WIDTH, FRAME_HEIGHT, FPS
+from config import CAMERA_ID, CAMERA_SOURCE, FRAME_WIDTH, FRAME_HEIGHT, FPS
 
 class Camera:
-    def __init__(self, camera_id=CAMERA_ID):
-        self.camera_id = camera_id
-        self.cap = cv2.VideoCapture(camera_id)
+    def __init__(self, camera_id=None):
+        self.camera_id = CAMERA_SOURCE if camera_id is None else camera_id
+        self.source = self._normalize_source(self.camera_id)
+        self.cap = cv2.VideoCapture(self.source)
         
         # Configure Camera
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-        self.cap.set(cv2.CAP_PROP_FPS, FPS)
+        if isinstance(self.source, int):
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+            self.cap.set(cv2.CAP_PROP_FPS, FPS)
         
         self.grabbed = False
         self.frame = None
@@ -24,7 +26,16 @@ class Camera:
             self.running = True
             self.start_thread()
         else:
-            raise RuntimeError(f"Could not open camera with ID {camera_id}")
+            raise RuntimeError(f"Could not open camera source {self.source!r}")
+
+    @staticmethod
+    def _normalize_source(source):
+        if isinstance(source, str):
+            stripped = source.strip()
+            if stripped.isdigit():
+                return int(stripped)
+            return stripped
+        return source
             
     def start_thread(self):
         self.thread = threading.Thread(target=self.update, args=())

@@ -1,121 +1,41 @@
-# Motion-Capture-System
+# Motion Capture System
 
-Real-time multi-camera markerless motion capture and kinematic analysis pipeline built for commodity hardware.
+This repository is organized around a clean top-level index and a single active implementation folder.
 
-This repository documents and tracks the flagship motion-capture work using architecture updates from:
+Start here:
 
-- `E:\main_architecture_update_20260310\untitled-3.pdf`
+- Active app and launchers: [Motion-capture/](Motion-capture/)
+- Root architecture assets: [docs/](docs/)
+- Current implementation summary: [Motion-capture/README.md](Motion-capture/README.md)
+- Change log: [Motion-capture/CHANGES.md](Motion-capture/CHANGES.md)
 
-## Project Summary
+## What this repo does
 
-This system performs synchronized multi-view 2D landmark capture, confidence-weighted stereo triangulation, and real-time kinematic analytics. It is designed to reduce monocular depth ambiguity and improve robustness under occlusion without requiring marker suits or specialized motion-capture labs.
+The project captures pose data from a webcam, phone stream, or video file, then turns it into live or offline motion-capture metrics.
 
-Core goals:
+Key capabilities:
 
-- real-time 3D joint reconstruction from multiple RGB cameras
-- timestamp synchronization over standard Wi-Fi
-- graceful degradation when one view drops or landmarks are low-confidence
-- live biomechanical metrics (joint angles, velocity, acceleration)
+- single-camera capture from a local webcam, IP phone stream, or recording
+- multi-camera server/master capture for stereo reconstruction
+- offline video verification with annotated output video
+- stabilized bone-length tracking with world-space preference
+- live dashboard metrics plus exported session data
 
-## Architecture Diagram
+## Clean repo map
 
-```mermaid
-flowchart LR
-	A[Camera Node A] --> B[Local MediaPipe Inference]
-	C[Camera Node B] --> D[Local MediaPipe Inference]
+The repository is intentionally split into a small number of visible entry points:
 
-	B --> E[Timestamped Landmark Stream]
-	D --> F[Timestamped Landmark Stream]
+- [Motion-capture/](Motion-capture/) contains the running application
+- [docs/](docs/) contains root-level architecture visuals and screenshots
+- [Motion-capture/docs/](Motion-capture/docs/) contains setup, implementation, and reference docs
 
-	E --> G[Clock Sync and Frame Matching]
-	F --> G
+## Recommended reading order
 
-	G --> H[Confidence-Weighted DLT Triangulation]
-	H --> I[Reprojection Error Gating]
-	I --> J[Tiered Fallback: Monocular and Occlusion Hold]
+1. [Motion-capture/README.md](Motion-capture/README.md) for the active app and launch commands.
+2. [Motion-capture/docs/SETUP.md](Motion-capture/docs/SETUP.md) for network and camera setup.
+3. [Motion-capture/IMPLEMENTATION.md](Motion-capture/IMPLEMENTATION.md) for the validation workflow.
+4. [docs/architecture.mmd](docs/architecture.mmd) for the high-level system diagram.
 
-	J --> K[3D Skeleton]
-	K --> L[Kinematics Engine]
-	L --> M[Joint Angles, Velocities, Accelerations]
-	M --> N[Database and Report Generator]
-```
+## Current focus
 
-Mermaid source: [docs/architecture.mmd](docs/architecture.mmd)
-
-## Architecture GIF and Screenshots
-
-### Architecture GIF
-
-![Architecture Demo](docs/screenshots/architecture-demo.gif)
-
-### Key Figures
-
-![Architecture Overview](docs/screenshots/architecture-overview.png)
-
-![Pipeline Diagram](docs/screenshots/pipeline-diagram.png)
-
-![System Comparison](docs/screenshots/system-comparison.png)
-
-### Results Visuals
-
-![Results Plot 1](docs/screenshots/results-plot-1.png)
-
-![Results Plot 2](docs/screenshots/results-plot-2.png)
-
-![Results Plot 3](docs/screenshots/results-plot-3.png)
-
-## README Explanation
-
-### 1. Acquisition and Synchronization
-
-- Multi-camera nodes run independent local inference.
-- Frames are aligned via software clock-offset correction and nearest-frame matching.
-- A bounded sync window (20-30 ms) is used to tolerate realistic Wi-Fi jitter.
-
-### 2. 3D Reconstruction
-
-- Landmarks are triangulated using confidence-weighted DLT.
-- Reprojection residual checks gate unreliable triangulations.
-- Fallback tiers preserve continuity when one camera drops or landmarks are occluded.
-
-### 3. Kinematic Analytics
-
-- Real-time computation of joint angles, segment lengths, linear/angular velocity, and acceleration.
-- Session metrics are persisted for post-run analysis and reporting.
-
-## Reported Results (from architecture update document)
-
-Consolidated evaluation highlights:
-
-- Throughput: 14.47 FPS mean, 29.91 FPS P95
-- End-to-end latency: 84.37 ms mean, 138.11 ms P95
-- Triangulation stage: approximately 1.4 ms per frame
-- Frame-to-frame jitter: 12.4 ms
-
-These indicate practical real-time behavior for long continuous capture sessions on commodity devices.
-
-## Repository Structure
-
-The repository root is the flagship documentation entry point. Implementation modules currently exist in:
-
-- `Motion-capture/`
-- `Motion-capture-vs1/`
-
-Supporting documentation and visuals added at root-level:
-
-- `docs/architecture.mmd`
-- `docs/assets/`
-- `docs/screenshots/`
-
-## Quick Start
-
-1. Install dependencies in the implementation folder you want to run.
-2. Configure camera endpoints and calibration values.
-3. Launch capture/coordinator scripts.
-4. Validate session outputs and generated reports.
-
-## Next Improvements
-
-- Add a single root-level launcher to remove ambiguity between implementation variants.
-- Add fixed benchmark scripts for reproducible latency/FPS reporting.
-- Add curated demo GIFs from live capture sessions in addition to architecture-derived visuals.
+The current work is about reducing variance, keeping metric outputs stable, and making the verification path easy to run from a video file before using live cameras.

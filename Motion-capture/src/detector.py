@@ -230,7 +230,7 @@ class MocapDetector:
         # Apply gain
         return cv2.convertScaleAbs(image, alpha=factor, beta=0)
 
-    def process(self, frame):
+    def process(self, frame, timestamp_ms=None):
         """
         Process a frame and return pose, face, and hand results.
         Expects BGR frame.
@@ -332,7 +332,11 @@ class MocapDetector:
             del frame_rgb   # mp.Image has its own copy; free Python copy
         
         # Calculate Timestamp in Milliseconds
-        timestamp_ms = int(time.time() * 1000)
+        # Offline tools can supply a video-derived timestamp for reproducible playback.
+        if timestamp_ms is None:
+            timestamp_ms = int(time.time() * 1000)
+        else:
+            timestamp_ms = int(timestamp_ms)
         
         # Monotonicity Check
         if timestamp_ms <= self.last_timestamp_ms:

@@ -1,12 +1,29 @@
 import cv2
-import mediapipe as mp
 import time
-from mediapipe import solutions
-from mediapipe.framework.formats import landmark_pb2
 import numpy as np
 from collections import deque
 from config import SHOW_FPS, THEME_COLOR
 from src.calculations import Calculations
+
+
+# Minimal connection sets to avoid hard dependency on mediapipe.solutions.
+POSE_CONNECTIONS = [
+    (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),
+    (11, 23), (12, 24), (23, 24),
+    (23, 25), (25, 27), (24, 26), (26, 28),
+    (15, 17), (15, 19), (15, 21),
+    (16, 18), (16, 20), (16, 22),
+    (27, 29), (27, 31), (28, 30), (28, 32),
+]
+
+HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (5, 9), (9, 10), (10, 11), (11, 12),
+    (9, 13), (13, 14), (14, 15), (15, 16),
+    (13, 17), (0, 17), (17, 18), (18, 19), (19, 20),
+]
+
 
 class Visualizer:
     def __init__(self):
@@ -18,55 +35,45 @@ class Visualizer:
         pose_result = results.get('pose')
         face_result = results.get('face')
         hand_result = results.get('hand')
+        h, w = frame.shape[:2]
+
+        def xy(lm):
+            x = int(float(lm.x) * w)
+            y = int(float(lm.y) * h)
+            return x, y
+
+        def draw_connections(landmarks, connections, color, thickness=2):
+            for a, b in connections:
+                if a >= len(landmarks) or b >= len(landmarks):
+                    continue
+                p1 = xy(landmarks[a])
+                p2 = xy(landmarks[b])
+                cv2.line(frame, p1, p2, color, thickness, cv2.LINE_AA)
+
+        def draw_points(landmarks, color, radius=2, step=1):
+            for idx, lm in enumerate(landmarks):
+                if step > 1 and idx % step != 0:
+                    continue
+                p = xy(lm)
+                cv2.circle(frame, p, radius, color, -1, cv2.LINE_AA)
         
         # 1. Draw Pose
         if pose_result and pose_result.pose_landmarks:
             for pose_landmarks in pose_result.pose_landmarks:
-                pose_proto = landmark_pb2.NormalizedLandmarkList()
-                pose_proto.landmark.extend([
-                    landmark_pb2.NormalizedLandmark(x=lm.x, y=lm.y, z=lm.z) 
-                    for lm in pose_landmarks
-                ])
-                solutions.drawing_utils.draw_landmarks(
-                    frame,
-                    pose_proto,
-                    solutions.pose.POSE_CONNECTIONS,
-                    solutions.drawing_styles.get_default_pose_landmarks_style()
-                )
-                # (duplicate draw_landmarks call removed — was doubling protobuf allocations)
+                draw_connections(pose_landmarks, POSE_CONNECTIONS, (0, 255, 0), thickness=2)
+                draw_points(pose_landmarks, (0, 200, 255), radius=3)
 
         # 2. Draw Face Mesh
         if face_result and face_result.face_landmarks:
             for face_landmarks in face_result.face_landmarks:
-                face_proto = landmark_pb2.NormalizedLandmarkList()
-                face_proto.landmark.extend([
-                    landmark_pb2.NormalizedLandmark(x=lm.x, y=lm.y, z=lm.z) 
-                    for lm in face_landmarks
-                ])
-                # Tesselation
-                solutions.drawing_utils.draw_landmarks(
-                    frame,
-                    face_proto,
-                    solutions.face_mesh.FACEMESH_TESSELATION,
-                    None,
-                    solutions.drawing_styles.get_default_face_mesh_tesselation_style()
-                )
+                # Face mesh can be dense; draw every 4th point for speed/readability.
+                draw_points(face_landmarks, (255, 140, 0), radius=1, step=4)
 
         # 3. Draw Hands
         if hand_result and hand_result.hand_landmarks:
             for hand_landmarks in hand_result.hand_landmarks:
-                hand_proto = landmark_pb2.NormalizedLandmarkList()
-                hand_proto.landmark.extend([
-                    landmark_pb2.NormalizedLandmark(x=lm.x, y=lm.y, z=lm.z) 
-                    for lm in hand_landmarks
-                ])
-                solutions.drawing_utils.draw_landmarks(
-                    frame,
-                    hand_proto,
-                    solutions.hands.HAND_CONNECTIONS,
-                    solutions.drawing_styles.get_default_hand_landmarks_style(),
-                    solutions.drawing_styles.get_default_hand_connections_style()
-                )
+                draw_connections(hand_landmarks, HAND_CONNECTIONS, (255, 255, 0), thickness=2)
+                draw_points(hand_landmarks, (255, 0, 255), radius=2)
             
         return frame
 

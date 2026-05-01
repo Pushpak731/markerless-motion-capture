@@ -1,11 +1,241 @@
+import statistics
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
+
 import numpy as np
 from config import (
     VISIBILITY_MIN_METRIC, ANGLE_OUTLIER_BASE_THRESHOLD,
     ANGLE_OUTLIER_VELOCITY_COEFF, MAX_LINEAR_VELOCITY,
     SMOOTHING_ALPHA_DEFAULT, SMOOTHING_ALPHA_FACE,
-    BODY_HEIGHT_MULTIPLIER, IPD_DEFAULT
+    BONE_LENGTH_CALIBRATION_FRAMES, BONE_LENGTH_EMA_ALPHA,
+    BONE_LENGTH_MAX_DEVIATION, BONE_LENGTH_MIN_CONFIDENCE,
+    IPD_DEFAULT
 )
 
+
+@dataclass
+class BoneLengthStats:
+    """Per-bone statistics used for variance/consistency reporting."""
+    samples: int = 0
+    mean: float = 0.0
+    m2: float = 0.0
+
+    def update(self, value: float) -> None:
+        self.samples += 1
+        delta = value - self.mean
+        self.mean += delta / self.samples
+        delta2 = value - self.mean
+        self.m2 += delta * delta2
+
+    @property
+    def variance(self) -> float:
+        return self.m2 / self.samples if self.samples > 0 else 0.0
+
+    @property
+    def stddev(self) -> float:
+        return self.variance ** 0.5
+
+
+class BoneLengthTracker:
+    """Stateful bone-length stabilizer.
+
+    The tracker smooths joint positions with EMA before any length computation,
+    learns a fixed calibration reference from the first N frames, and then
+    reports raw, normalized, constrained, and world-space bone lengths without
+    mixing coordinate systems in one calculation path.
+    """
+
+    def __init__(
+        self,
+        calibration_frames: int = BONE_LENGTH_CALIBRATION_FRAMES,
+        ema_alpha: float = BONE_LENGTH_EMA_ALPHA,
+        max_deviation: float = BONE_LENGTH_MAX_DEVIATION,
+        min_confidence: float = BONE_LENGTH_MIN_CONFIDENCE,
+    ):
+        self.calibration_frames = int(calibration_frames)
+        self.ema_alpha = float(ema_alpha)
+        self.max_deviation = float(max_deviation)
+        self.min_confidence = float(min_confidence)
+
+        self._smoothed_positions: dict[int, dict] = {}
+        self._reference_buffers = defaultdict(list)
+        self._reference_lengths: dict[str, float] = {}
+        self._bone_stats = defaultdict(BoneLengthStats)
+        self._frame_count = 0
+
+    @staticmethod
+    def _landmarks_to_map(landmarks):
+        if not landmarks:
+            return {}
+        if isinstance(landmarks, dict):
+            return {int(k): v for k, v in landmarks.items() if isinstance(v, dict)}
+        mapped = {}
+        for idx, lm in enumerate(landmarks):
+            if isinstance(lm, dict):
+                mapped[int(idx)] = lm
+        return mapped
+
+    @staticmethod
+    def _format_bone_name(a: int, b: int) -> str:
+        return f"{Calculations.POSE_IDX_NAMES.get(a, str(a))}_{Calculations.POSE_IDX_NAMES.get(b, str(b))}"
+
+    def _smooth_landmarks(self, landmarks):
+        input_map = self._landmarks_to_map(landmarks)
+        smoothed = {}
+
+        def _zero_landmark():
+            return {
+                'x': 0.0,
+                'y': 0.0,
+                'z': 0.0,
+                'visibility': 0.0,
+                'v': 0.0,
+                'xyz': (0.0, 0.0, 0.0),
+            }
+
+        for idx in range(33):
+            lm = input_map.get(idx)
+            if lm is None:
+                previous = self._smoothed_positions.get(idx)
+                if previous is None:
+                    smoothed[idx] = _zero_landmark()
+                else:
+                    smoothed[idx] = previous
+                continue
+
+            visibility = float(lm.get('visibility', lm.get('v', 1.0)))
+            current = np.array([
+                float(lm.get('x', 0.0)),
+                float(lm.get('y', 0.0)),
+                float(lm.get('z', 0.0)),
+            ], dtype=float)
+
+            previous = self._smoothed_positions.get(idx)
+            if previous is None:
+                if visibility < self.min_confidence:
+                    smoothed[idx] = _zero_landmark()
+                    continue
+                smoothed_vec = current
+            else:
+                alpha = self.ema_alpha if visibility >= self.min_confidence else 0.0
+                smoothed_vec = alpha * current + (1.0 - alpha) * np.array(previous['xyz'], dtype=float)
+
+            smoothed[idx] = {
+                'x': float(smoothed_vec[0]),
+                'y': float(smoothed_vec[1]),
+                'z': float(smoothed_vec[2]),
+                'visibility': visibility,
+                'v': visibility,
+                'xyz': (float(smoothed_vec[0]), float(smoothed_vec[1]), float(smoothed_vec[2])),
+            }
+
+        # Ensure full landmark vector is present for downstream indexing paths.
+        for idx in range(33):
+            if idx not in smoothed:
+                previous = self._smoothed_positions.get(idx)
+                smoothed[idx] = previous if previous is not None else _zero_landmark()
+
+        self._smoothed_positions = smoothed
+        return [smoothed[idx] for idx in range(33)]
+
+    def _compute_lengths(self, landmarks):
+        metrics = Calculations.get_body_metrics(landmarks)
+        return {
+            key: value
+            for key, value in metrics.items()
+            if key.startswith('Length_') or key.startswith('Width_')
+        }
+
+    def _update_reference(self, raw_lengths: dict[str, float]):
+        self._frame_count += 1
+
+        for bone_name, length in raw_lengths.items():
+            self._bone_stats[bone_name].update(length)
+
+            if bone_name not in self._reference_lengths:
+                self._reference_buffers[bone_name].append(length)
+
+        if self._frame_count <= self.calibration_frames:
+            return
+
+        # Freeze a reference after calibration; bones that were unseen can still
+        # adopt their first valid post-calibration measurement so the pipeline
+        # keeps working without mixing in a per-frame body-height estimate.
+        for bone_name, samples in self._reference_buffers.items():
+            if bone_name not in self._reference_lengths and samples:
+                self._reference_lengths[bone_name] = float(sum(samples) / len(samples))
+        self._reference_buffers.clear()
+
+    def process(self, pose_landmarks, world_landmarks=None):
+        """Return stabilized bone metrics for the best available coordinate source."""
+        source_name = 'world' if world_landmarks else 'pose'
+        source_landmarks = world_landmarks if world_landmarks else pose_landmarks
+        smoothed_landmarks = self._smooth_landmarks(source_landmarks)
+        raw_lengths = self._compute_lengths(smoothed_landmarks)
+
+        self._update_reference(raw_lengths)
+
+        reference_lengths = dict(self._reference_lengths)
+        normalized_lengths = {}
+        constrained_lengths = {}
+        variance_lengths = {}
+        stddev_lengths = {}
+
+        consistency_terms = []
+        for bone_name, raw_value in raw_lengths.items():
+            reference_value = reference_lengths.get(bone_name)
+            if reference_value is None or reference_value <= 1e-9:
+                reference_value = raw_value
+                if bone_name not in self._reference_lengths:
+                    self._reference_lengths[bone_name] = raw_value
+
+            normalized_lengths[f'Normalized_{bone_name}'] = round(raw_value / max(reference_value, 1e-9), 4)
+
+            deviation = abs(raw_value - reference_value) / max(reference_value, 1e-9)
+            if deviation > self.max_deviation:
+                constrained_value = reference_value + (self.max_deviation * reference_value * (1.0 if raw_value >= reference_value else -1.0))
+            else:
+                constrained_value = raw_value
+            constrained_lengths[f'Constrained_{bone_name}'] = round(constrained_value, 4)
+
+            stats = self._bone_stats[bone_name]
+            variance_lengths[f'Bone_Length_Variance_{bone_name}'] = round(stats.variance, 6)
+            stddev_lengths[f'Bone_Length_StdDev_{bone_name}'] = round(stats.stddev, 6)
+
+            consistency_terms.append(min(1.0, deviation / max(self.max_deviation, 1e-9)))
+
+        consistency_score = 1.0
+        if consistency_terms:
+            consistency_score = max(0.0, 1.0 - (sum(consistency_terms) / len(consistency_terms)))
+
+        world_lengths = {
+            f'World_{name}': round(value, 4)
+            for name, value in raw_lengths.items()
+        } if source_name == 'world' else {}
+
+        metrics = {}
+        metrics.update({f'Length_{name}': round(value, 4) for name, value in raw_lengths.items()})
+        metrics.update(normalized_lengths)
+        metrics.update(constrained_lengths)
+        metrics.update(variance_lengths)
+        metrics.update(stddev_lengths)
+        metrics.update(world_lengths)
+        metrics.update({f'Reference_{name}': round(value, 4) for name, value in reference_lengths.items()})
+        metrics['Bone_Consistency_Score'] = round(consistency_score, 4)
+
+        return {
+            'source_name': source_name,
+            'smoothed_landmarks': smoothed_landmarks,
+            'metrics': metrics,
+            'raw_lengths': {f'Length_{name}': round(value, 4) for name, value in raw_lengths.items()},
+            'normalized_lengths': normalized_lengths,
+            'constrained_lengths': constrained_lengths,
+            'world_lengths': world_lengths,
+            'variance_lengths': variance_lengths,
+            'stddev_lengths': stddev_lengths,
+            'reference_lengths': {f'Reference_{name}': round(value, 4) for name, value in reference_lengths.items()},
+            'consistency_score': round(consistency_score, 4),
+        }
 class Calculations:
     POSE_IDX = {
         'left_shoulder': 11,
@@ -160,12 +390,24 @@ class Calculations:
 
         return angles
 
+    POSE_IDX_NAMES = {
+        11: 'left_shoulder',
+        12: 'right_shoulder',
+        13: 'left_elbow',
+        14: 'right_elbow',
+        15: 'left_wrist',
+        16: 'right_wrist',
+        23: 'left_hip',
+        24: 'right_hip',
+        25: 'left_knee',
+        26: 'right_knee',
+        27: 'left_ankle',
+        28: 'right_ankle',
+    }
+
     @staticmethod
-    def get_body_metrics(pose_landmarks):
-        """
-        Calculate joint angles and limb lengths from MediaPipe Pose landmarks.
-        Refined: Shoulders/Hips use Spine Vector for stability.
-        """
+    def get_joint_angles(pose_landmarks):
+        """Calculate joint angles only, without any bone-length normalization."""
         if not pose_landmarks or len(pose_landmarks) < 33:
             return {}
 
@@ -174,68 +416,60 @@ class Calculations:
         min_vis = VISIBILITY_MIN_METRIC
 
         def v(indices):
-            """Check if all landmarks in indices have sufficient visibility."""
             for idx in indices:
                 if 'v' in lm[idx] and lm[idx]['v'] < min_vis:
                     return False
             return True
 
-        # --- VIRTUAL LANDMARKS (Spine) ---
-        # Mid-Hip
         mh_x = (lm[23]['x'] + lm[24]['x']) / 2
         mh_y = (lm[23]['y'] + lm[24]['y']) / 2
         mh_z = (lm[23]['z'] + lm[24]['z']) / 2
-        
-        # Mid-Shoulder
+
         ms_x = (lm[11]['x'] + lm[12]['x']) / 2
         ms_y = (lm[11]['y'] + lm[12]['y']) / 2
         ms_z = (lm[11]['z'] + lm[12]['z']) / 2
-        
-        # Spine Vector (MidHip -> MidShoulder) pointing UP
+
         spine_vec = np.array([ms_x - mh_x, ms_y - mh_y, ms_z - mh_z])
 
-        # --- JOINT ANGLES (Degrees) ---
-        
-        # Elbows: Shoulder -> Elbow -> Wrist (Standard)
         if v([11,13,15]): metrics['Angle_Elbow_L'] = Calculations.calculate_angle(lm[11], lm[13], lm[15])
         if v([12,14,16]): metrics['Angle_Elbow_R'] = Calculations.calculate_angle(lm[12], lm[14], lm[16])
-        
-        # Shoulders: Spine -> Shoulder -> Elbow
-        # Angle between Vertical Spine and Upper Arm
-        if v([11,13]): 
-            # We want angle at Shoulder. Vector1 = pre-calced Spine. Vector2 = Shoulder->Elbow.
-            # calculate_angle logic: BA vs BC. We pass BA = Spine. B = Shoulder. C = Elbow.
-            # Note: spine_vec is UP.
-            metrics['Angle_Shoulder_L'] = Calculations.calculate_angle(None, lm[11], lm[13], vector_b_to_a=spine_vec)
-        
-        if v([12,14]): 
-            metrics['Angle_Shoulder_R'] = Calculations.calculate_angle(None, lm[12], lm[14], vector_b_to_a=spine_vec)
-        
-        # Hips: Spine -> Hip -> Knee
-        # Angle between Spine and Upper Leg
-        # We use NEGATIVE spine vec (Down) for hips? Or just measure deviation from straight line?
-        # Standard: Hip Flexion is angle between Trunk and Thigh.
-        # Trunk vector = Spine (Up). Thigh vector = Hip->Knee (Down).
-        # Extended leg = 180 deg. Flexed = 90 deg.
-        spine_down = -spine_vec
+        if v([11,13]): metrics['Angle_Shoulder_L'] = Calculations.calculate_angle(None, lm[11], lm[13], vector_b_to_a=spine_vec)
+        if v([12,14]): metrics['Angle_Shoulder_R'] = Calculations.calculate_angle(None, lm[12], lm[14], vector_b_to_a=spine_vec)
         if v([23,25]): metrics['Angle_Hip_L'] = Calculations.calculate_angle(None, lm[23], lm[25], vector_b_to_a=spine_vec)
         if v([24,26]): metrics['Angle_Hip_R'] = Calculations.calculate_angle(None, lm[24], lm[26], vector_b_to_a=spine_vec)
-        
-        # Knees: Hip -> Knee -> Ankle (Standard)
         if v([23,25,27]): metrics['Angle_Knee_L'] = Calculations.calculate_angle(lm[23], lm[25], lm[27])
         if v([24,26,28]): metrics['Angle_Knee_R'] = Calculations.calculate_angle(lm[24], lm[26], lm[28])
 
-        # --- LIMB LENGTHS (Normalized Units 0-1) ---
+        return metrics
+
+    @staticmethod
+    def get_body_metrics(pose_landmarks):
+        """
+        Calculate joint angles and raw limb lengths from a pose landmark set.
+        This helper remains for backward compatibility; bone-length stabilization
+        is now handled by BoneLengthTracker using a fixed calibration reference.
+        """
+        metrics = Calculations.get_joint_angles(pose_landmarks)
+        if not pose_landmarks or len(pose_landmarks) < 33:
+            return metrics
+
+        lm = pose_landmarks
+        min_vis = VISIBILITY_MIN_METRIC
+
+        def v(indices):
+            for idx in indices:
+                if 'v' in lm[idx] and lm[idx]['v'] < min_vis:
+                    return False
+            return True
+
         if v([11,13]): metrics['Length_UpperArm_L'] = Calculations.calculate_distance(lm[11], lm[13])
         if v([13,15]): metrics['Length_LowerArm_L'] = Calculations.calculate_distance(lm[13], lm[15])
         if v([12,14]): metrics['Length_UpperArm_R'] = Calculations.calculate_distance(lm[12], lm[14])
         if v([14,16]): metrics['Length_LowerArm_R'] = Calculations.calculate_distance(lm[14], lm[16])
-        
         if v([23,25]): metrics['Length_UpperLeg_L'] = Calculations.calculate_distance(lm[23], lm[25])
         if v([25,27]): metrics['Length_LowerLeg_L'] = Calculations.calculate_distance(lm[25], lm[27])
         if v([24,26]): metrics['Length_UpperLeg_R'] = Calculations.calculate_distance(lm[24], lm[26])
         if v([26,28]): metrics['Length_LowerLeg_R'] = Calculations.calculate_distance(lm[26], lm[28])
-        
         if v([11,12]): metrics['Width_Shoulder'] = Calculations.calculate_distance(lm[11], lm[12])
         if v([23,24]): metrics['Width_Hip'] = Calculations.calculate_distance(lm[23], lm[24])
 
@@ -340,48 +574,30 @@ class Calculations:
         return kinematics
 
     @staticmethod
-    def normalize_metrics(metrics, pose_landmarks):
+    def normalize_metrics(metrics, reference_lengths=None, scale_factor=None):
         """
-        Normalize all limb lengths by body height (Nose to Mid-Hip).
-        Adds 'Normalized_' keys to preserve Raw values.
+        Normalize all limb lengths by a fixed calibration reference or a global
+        scale factor.
+
+        This intentionally avoids frame-varying body-height normalization so the
+        same metric does not oscillate just because the hips/ankles jitter.
         """
-        if not metrics or not pose_landmarks:
+        if not metrics:
             return metrics
-            
-        lm = pose_landmarks
-        
-        # Calculate Body Height Reference
-        # User Suggestion: Hip Center -> Ankle Average (More stable than Head)
-        
-        # Mid-Hip
-        hip_x = (lm[23]['x'] + lm[24]['x']) / 2
-        hip_y = (lm[23]['y'] + lm[24]['y']) / 2
-        hip_z = (lm[23]['z'] + lm[24]['z']) / 2
-        mid_hip = {'x': hip_x, 'y': hip_y, 'z': hip_z}
-        
-        # Mid-Ankle
-        ank_x = (lm[27]['x'] + lm[28]['x']) / 2
-        ank_y = (lm[27]['y'] + lm[28]['y']) / 2
-        ank_z = (lm[27]['z'] + lm[28]['z']) / 2
-        mid_ankle = {'x': ank_x, 'y': ank_y, 'z': ank_z}
-        
-        # Height Ref = Distance from Mid-Hip to Mid-Ankle (Leg Length approx)
-        # Taking "Body Height" usually means full height. 
-        # But this reference is stable. Let's call it "BodyScale".
-        height = Calculations.calculate_distance(mid_hip, mid_ankle) * BODY_HEIGHT_MULTIPLIER 
-        # Multiply by 2.0 to approximate full stature (Legs ~ half height)? 
-        # Or just use the raw distance as the unit. 
-        # User said: "Scaling lengths by body height... Hip center -> ankle average".
-        # Let's use the raw leg length as the unit "1.0".
-        if height == 0: height = 1.0 # Avoid div by zero
-        
-        # Normalize all 'Length_' or 'Width_' metrics
-        # Create NEW keys so we keep Raw (Meters) and Normalized (Ratio)
-        for k, v in list(metrics.items()): # copy list safely
-            if k.startswith('Length_') or k.startswith('Width_'):
-                metrics[f"Normalized_{k}"] = round(v / height, 4)
-                
-        metrics['Body_Height'] = round(height, 4)
+
+        ref_map = reference_lengths or {}
+        global_scale = float(scale_factor) if scale_factor and scale_factor > 1e-9 else None
+
+        for k, v in list(metrics.items()):
+            if not (k.startswith('Length_') or k.startswith('Width_')):
+                continue
+
+            reference_value = ref_map.get(k)
+            if reference_value is not None and reference_value > 1e-9:
+                metrics[f"Normalized_{k}"] = round(v / reference_value, 4)
+            elif global_scale is not None:
+                metrics[f"Normalized_{k}"] = round(v / global_scale, 4)
+
         return metrics
     
     @staticmethod
@@ -395,7 +611,14 @@ class Calculations:
             
         filtered = {}
         for k, v in current.items():
-            # Only smooth Angles and Lengths
+            # Keep length metrics as the tracker computed them; only smooth
+            # angular / face signals here. This avoids re-mixing raw, normalized,
+            # and world-space bone lengths after the stabilized pipeline.
+            if k.startswith(('Length_', 'Normalized_', 'World_', 'Constrained_', 'Bone_Length_')):
+                filtered[k] = v
+                continue
+
+            # Only smooth Angles and non-length metrics
             if k not in prev:
                 filtered[k] = v
                 continue

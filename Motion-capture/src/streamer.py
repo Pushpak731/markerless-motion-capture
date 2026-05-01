@@ -7,7 +7,7 @@ from src.detector import MocapDetector
 from src.visualizer import Visualizer
 from src.database import MocapDB
 from src.pose_corrector import PoseCorrector
-from src.calculations import Calculations
+from src.calculations import Calculations, BoneLengthTracker
 from config import DRAW_LANDMARKS
 
 class VideoStreamer:
@@ -21,6 +21,7 @@ class VideoStreamer:
         self.thread = None
         self.output_frame = None
         self.latest_metrics = {}
+        self.bone_tracker = BoneLengthTracker()
         # Kinematics State
         self.prev_lm = []
         self.prev_metrics = {}
@@ -64,15 +65,22 @@ class VideoStreamer:
                 try:
                     # Uses the corrected landmarks
                     # Prioritize World Landmarks for Physics/Metrics (Meters)
-                    if results.get('pose').pose_world_landmarks:
-                         plm = results.get('pose').pose_world_landmarks[0]
-                    else:
-                         plm = results.get('pose').pose_landmarks[0]
+                    world_lm = results.get('pose').pose_world_landmarks[0] if results.get('pose').pose_world_landmarks else None
+                    plm = world_lm if world_lm else results.get('pose').pose_landmarks[0]
 
                     lm_dict = [{'x': lm.x, 'y': lm.y, 'z': lm.z, 'v': lm.visibility} for lm in plm]
+                    world_dict = [{'x': lm.x, 'y': lm.y, 'z': lm.z, 'v': getattr(lm, 'visibility', 1.0)} for lm in world_lm] if world_lm else None
                     
                     # Core Metrics
-                    body_metrics = Calculations.get_body_metrics(lm_dict)
+                    source_metrics = Calculations.get_body_metrics(lm_dict)
+                    angle_metrics = {
+                        k: v for k, v in source_metrics.items()
+                        if k.startswith('Angle_')
+                    }
+
+                    bone_result = self.bone_tracker.process(lm_dict, world_dict)
+                    bone_metrics = bone_result.get('metrics', {})
+                    smoothed_lm = bone_result.get('smoothed_landmarks') or lm_dict
                     
                     # Face Metrics
                     face_metrics = {}
@@ -82,14 +90,7 @@ class VideoStreamer:
                         flm_dict = [{'x': lm.x, 'y': lm.y, 'z': lm.z} for lm in flm]
                         face_metrics = Calculations.get_face_metrics(flm_dict)
                         
-                    raw_metrics = {**body_metrics, **face_metrics}
-                    
-                    # --- ADVANCED PHYSICS (Normalization & Filter) ---
-                    # 1. Normalize Lengths (Height-independent)
-                    norm_metrics = Calculations.normalize_metrics(raw_metrics, lm_dict)
-                    
-                    # 2. Smooth & Reject Outliers (Temporal)
-                    current_metrics = Calculations.filter_and_smooth(norm_metrics, self.prev_metrics)
+                        current_metrics = Calculations.filter_and_smooth({**angle_metrics, **bone_metrics, **face_metrics}, self.prev_metrics)
                     # -------------------------------------------------
                     
                     # Kinematics
@@ -97,11 +98,11 @@ class VideoStreamer:
                     if self.prev_time is not None:
                         dt = now - self.prev_time
                         if dt > 0:
-                            kinematics = Calculations.get_kinematics(lm_dict, self.prev_lm, current_metrics, self.prev_metrics, dt)
+                            kinematics = Calculations.get_kinematics(smoothed_lm, self.prev_lm, current_metrics, self.prev_metrics, dt)
                             current_metrics.update(kinematics)
                     
                     # Update State
-                    self.prev_lm = lm_dict
+                        self.prev_lm = smoothed_lm
                     self.prev_metrics = current_metrics
                     self.prev_time = now
                     

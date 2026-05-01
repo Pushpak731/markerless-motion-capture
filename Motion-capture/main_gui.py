@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import threading
 import queue
 import time
@@ -86,7 +86,7 @@ from src.database import MocapDB
 from src.visualizer_3d import Visualizer3D
 from src.report_generator import ReportGenerator
 from src.pose_corrector import PoseCorrector
-from src.calculations import Calculations
+from src.calculations import Calculations, BoneLengthTracker
 import config
 from config import (
     DRAW_LANDMARKS, MULTI_CAMERA_MODE, REMOTE_CAMERA_IP,
@@ -109,6 +109,7 @@ elif MULTI_CAMERA_MODE == 'master':
 class MocapGUI:
     def __init__(self):
         # Initialize components
+        self._camera_lock = threading.Lock()
         self.camera = Camera()
         self.detector = MocapDetector()
         self.visualizer = Visualizer()
@@ -201,9 +202,12 @@ class MocapGUI:
         self._metric_state = {
             'local_cam': {'prev_lm': [], 'prev_metrics': {}, 'prev_time': None}
         }
+        self._bone_trackers = {}
         self.latest_local_metrics = {}
         self.latest_remote_metrics = {}
         self.latest_quality = {}
+        self._offline_verify_running = False
+        self._last_verified_output = None
         
         # Create tkinter window
         self.root = tk.Tk()
@@ -469,8 +473,8 @@ class MocapGUI:
         
 
         
-        # Live Biometrics Panel
-        metrics_frame = tk.LabelFrame(parent, text="Live Biometrics (Degrees)", 
+        # Live Angles Panel
+        metrics_frame = tk.LabelFrame(parent, text="Live Biometrics (Angles)", 
                                     bg='#0f0f1e', fg='#00d4ff', font=("Arial", 12, "bold"))
         metrics_frame.pack(fill=tk.X, padx=20, pady=10)
         
@@ -481,9 +485,6 @@ class MocapGUI:
             ("L Elbow", "Angle_Elbow_L", "°"), ("R Elbow", "Angle_Elbow_R", "°"),
             ("L Knee", "Angle_Knee_L", "°"),   ("R Knee", "Angle_Knee_R", "°"),
             ("L Shoulder", "Angle_Shoulder_L", "°"), ("R Shoulder", "Angle_Shoulder_R", "°"),
-            # Lengths
-            ("L Arm", "Length_UpperArm_L", ""), ("R Arm", "Length_UpperArm_R", ""),
-            ("L Leg", "Length_UpperLeg_L", ""), ("R Leg", "Length_UpperLeg_R", "")
         ]
         
         for i, (label_text, key, unit) in enumerate(metric_keys):
@@ -507,10 +508,138 @@ class MocapGUI:
         metrics_frame.columnconfigure(1, weight=1)
         metrics_frame.columnconfigure(2, weight=1)
         metrics_frame.columnconfigure(3, weight=1)
+
+        # Bone Lengths Panel
+        bone_frame = tk.LabelFrame(parent, text="Bone Lengths (Raw / Normalized / World)",
+                                   bg='#0f0f1e', fg='#00d4ff', font=("Arial", 12, "bold"))
+        bone_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        self.bone_length_labels = {}
+        tk.Label(bone_frame, text="Bone", bg='#0f0f1e', fg='#e0e0e0', font=("Arial", 10, "bold")).grid(
+            row=0, column=0, padx=10, pady=(8, 4), sticky="w"
+        )
+        for col, header in enumerate(("Raw", "Normalized", "World 3D"), start=1):
+            tk.Label(bone_frame, text=header, bg='#0f0f1e', fg='#00d4ff', font=("Arial", 10, "bold")).grid(
+                row=0, column=col, padx=8, pady=(8, 4), sticky="w"
+            )
+
+        bone_keys = [
+            ("L Upper Arm", "Length_UpperArm_L"),
+            ("R Upper Arm", "Length_UpperArm_R"),
+            ("L Lower Arm", "Length_LowerArm_L"),
+            ("R Lower Arm", "Length_LowerArm_R"),
+            ("L Upper Leg", "Length_UpperLeg_L"),
+            ("R Upper Leg", "Length_UpperLeg_R"),
+            ("L Lower Leg", "Length_LowerLeg_L"),
+            ("R Lower Leg", "Length_LowerLeg_R"),
+            ("Shoulder Width", "Width_Shoulder"),
+            ("Hip Width", "Width_Hip"),
+        ]
+
+        for row, (label_text, key) in enumerate(bone_keys, start=1):
+            tk.Label(bone_frame, text=label_text, bg='#0f0f1e', fg='#e0e0e0', font=("Arial", 10)).grid(
+                row=row, column=0, padx=10, pady=4, sticky="w"
+            )
+            val_font = ("Courier", 10, "bold") if MULTI_CAMERA_MODE == 'master' else ("Courier", 11, "bold")
+            val_width = 32 if MULTI_CAMERA_MODE == 'master' else 18
+            widgets = {}
+            for col in range(1, 4):
+                widget = tk.Label(
+                    bone_frame,
+                    text="--",
+                    bg='#0f0f1e',
+                    fg='#00ff88',
+                    font=val_font,
+                    width=val_width,
+                    anchor='w'
+                )
+                widget.grid(row=row, column=col, padx=6, pady=4, sticky="w")
+                widgets[col] = widget
+            self.bone_length_labels[key] = widgets
+
+        bone_frame.columnconfigure(0, weight=1)
+        bone_frame.columnconfigure(1, weight=1)
+        bone_frame.columnconfigure(2, weight=1)
+        bone_frame.columnconfigure(3, weight=1)
         
         # Controls
         control_frame = tk.Frame(parent, bg='#0f0f1e')
         control_frame.pack(pady=10)
+
+        # Source Selector
+        source_frame = tk.LabelFrame(parent, text="Camera Source", 
+                                     bg='#0f0f1e', fg='#00d4ff', font=("Arial", 10, "bold"))
+        source_frame.pack(fill=tk.X, padx=20, pady=5)
+
+        tk.Label(source_frame, text="Mode", bg='#0f0f1e', fg='#aaa').grid(row=0, column=0, padx=5, pady=4, sticky='e')
+        self.source_mode_var = tk.StringVar(value='webcam')
+        self.source_mode_combo = ttk.Combobox(
+            source_frame,
+            textvariable=self.source_mode_var,
+            values=['webcam', 'phone', 'file'],
+            state='readonly',
+            width=10
+        )
+        self.source_mode_combo.grid(row=0, column=1, padx=5, pady=4, sticky='w')
+
+        tk.Label(source_frame, text="Value", bg='#0f0f1e', fg='#aaa').grid(row=1, column=0, padx=5, pady=4, sticky='e')
+        self.source_value_var = tk.StringVar(value=str(getattr(config, 'CAMERA_SOURCE', 0)))
+        self.source_value_entry = tk.Entry(source_frame, textvariable=self.source_value_var, bg='#1a1a2e', fg='#e0e0e0', insertbackground='#e0e0e0', width=34)
+        self.source_value_entry.grid(row=1, column=1, columnspan=2, padx=5, pady=4, sticky='we')
+
+        self.source_browse_btn = tk.Button(source_frame, text="Browse", command=self.browse_source_file,
+                                           font=("Arial", 9), bg='#1a1a2e', fg='#e0e0e0', width=8, bd=0, relief=tk.FLAT)
+        self.source_browse_btn.grid(row=0, column=2, padx=5, pady=4)
+
+        self.source_apply_btn = tk.Button(source_frame, text="Apply Source", command=self.apply_selected_source,
+                                          font=("Arial", 9, "bold"), bg='#1a1a2e', fg='#00ff88', width=12, bd=0, relief=tk.FLAT)
+        self.source_apply_btn.grid(row=2, column=2, padx=5, pady=4)
+
+        self.source_status_var = tk.StringVar(value=f"Current: {getattr(config, 'CAMERA_SOURCE', 0)!r}")
+        tk.Label(source_frame, textvariable=self.source_status_var, bg='#0f0f1e', fg='#00d4ff', anchor='w').grid(
+            row=2, column=0, columnspan=2, padx=5, pady=4, sticky='we'
+        )
+
+        source_frame.columnconfigure(1, weight=1)
+
+        # Offline verifier panel
+        verify_frame = tk.LabelFrame(parent, text="Offline Video Verify", 
+                                     bg='#0f0f1e', fg='#00d4ff', font=("Arial", 10, "bold"))
+        verify_frame.pack(fill=tk.X, padx=20, pady=5)
+
+        self.verify_max_frames_var = tk.StringVar(value='0')
+        tk.Label(verify_frame, text="Max Frames (0=all)", bg='#0f0f1e', fg='#aaa').grid(row=0, column=0, padx=5, pady=4, sticky='e')
+        tk.Entry(verify_frame, textvariable=self.verify_max_frames_var, bg='#1a1a2e', fg='#e0e0e0', insertbackground='#e0e0e0', width=10).grid(
+            row=0, column=1, padx=5, pady=4, sticky='w'
+        )
+
+        self.verify_run_btn = tk.Button(
+            verify_frame,
+            text="Upload + Verify",
+            command=self.upload_and_verify_video,
+            font=("Arial", 9, "bold"),
+            bg='#1a1a2e', fg='#00ff88',
+            width=14, bd=0, relief=tk.FLAT
+        )
+        self.verify_run_btn.grid(row=0, column=2, padx=5, pady=4)
+
+        self.verify_load_btn = tk.Button(
+            verify_frame,
+            text="Load Annotated",
+            command=self.load_last_verified_output,
+            font=("Arial", 9),
+            bg='#1a1a2e', fg='#00d4ff',
+            width=14, bd=0, relief=tk.FLAT,
+            state=tk.DISABLED
+        )
+        self.verify_load_btn.grid(row=1, column=2, padx=5, pady=4)
+
+        self.verify_status_var = tk.StringVar(value="No verification run yet.")
+        tk.Label(verify_frame, textvariable=self.verify_status_var, bg='#0f0f1e', fg='#e0e0e0', anchor='w', justify='left').grid(
+            row=1, column=0, columnspan=2, padx=5, pady=4, sticky='we'
+        )
+
+        verify_frame.columnconfigure(1, weight=1)
         
         # Toggles
         toggle_frame = tk.Frame(parent, bg='#0f0f1e')
@@ -739,6 +868,162 @@ class MocapGUI:
             self.detector.reload(model_type)
         except Exception as e:
             print(f"Error reloading model: {e}")
+
+    @staticmethod
+    def _normalize_source_value(mode: str, value: str):
+        text = (value or '').strip()
+        if mode == 'webcam':
+            if text == '':
+                return 0
+            if text.isdigit():
+                return int(text)
+            raise ValueError("Webcam source must be a numeric device index (e.g. 0 or 1).")
+        if mode == 'phone':
+            if not text:
+                raise ValueError("Phone stream URL cannot be empty.")
+            return text
+        if mode == 'file':
+            if not text:
+                raise ValueError("Video file path cannot be empty.")
+            return text
+        raise ValueError(f"Unsupported source mode: {mode}")
+
+    def browse_source_file(self):
+        selected = filedialog.askopenfilename(
+            title="Select Video File Source",
+            filetypes=[
+                ("Video Files", "*.mp4 *.mov *.avi *.mkv *.m4v"),
+                ("All Files", "*.*"),
+            ],
+        )
+        if selected:
+            self.source_mode_var.set('file')
+            self.source_value_var.set(selected)
+
+    def _apply_camera_source(self, source):
+        try:
+            new_camera = Camera(source)
+        except Exception as exc:
+            messagebox.showerror("Source Error", f"Failed to open source {source!r}\n\n{exc}")
+            return False
+
+        with self._camera_lock:
+            old_camera = self.camera
+            self.camera = new_camera
+
+        try:
+            if old_camera:
+                old_camera.release()
+        except Exception:
+            pass
+
+        config.CAMERA_SOURCE = source
+        self.source_status_var.set(f"Current: {source!r}")
+        self.status_label.config(text="● SOURCE UPDATED", fg='#00d4ff')
+        self.root.after(1200, lambda: self.status_label.config(
+            text=("● RECORDING" if self.is_recording else "● READY"),
+            fg=('#ff5555' if self.is_recording else '#00ff88')
+        ))
+        return True
+
+    def apply_selected_source(self):
+        try:
+            mode = self.source_mode_var.get()
+            value = self.source_value_var.get()
+            source = self._normalize_source_value(mode, value)
+        except ValueError as exc:
+            messagebox.showwarning("Invalid Source", str(exc))
+            return
+
+        if self._apply_camera_source(source):
+            print(f"[GUI] Camera source switched to: {source!r}")
+
+    def upload_and_verify_video(self):
+        if self._offline_verify_running:
+            messagebox.showinfo("Offline Verify", "A verification job is already running.")
+            return
+
+        input_path = filedialog.askopenfilename(
+            title="Upload Video for Offline Verification",
+            filetypes=[
+                ("Video Files", "*.mp4 *.mov *.avi *.mkv *.m4v"),
+                ("All Files", "*.*"),
+            ],
+        )
+        if not input_path:
+            return
+
+        try:
+            max_frames = int((self.verify_max_frames_var.get() or '0').strip())
+            if max_frames < 0:
+                max_frames = 0
+        except Exception:
+            max_frames = 0
+
+        self._offline_verify_running = True
+        self.verify_run_btn.config(state=tk.DISABLED, text="Processing...")
+        self.verify_status_var.set("Running offline verification...")
+
+        worker = threading.Thread(
+            target=self._offline_verify_worker,
+            args=(input_path, max_frames),
+            daemon=True,
+        )
+        worker.start()
+
+    def _offline_verify_worker(self, input_path: str, max_frames: int):
+        try:
+            from tools.process_video import process_video
+
+            out_dir = os.path.join(os.path.dirname(__file__), 'data', 'offline_verify', 'outputs')
+            os.makedirs(out_dir, exist_ok=True)
+
+            stem = os.path.splitext(os.path.basename(input_path))[0]
+            ts = int(time.time())
+            output_path = os.path.join(out_dir, f"{stem}_annotated_{ts}.mp4")
+
+            stats = process_video(input_path=input_path, output_path=output_path, max_frames=max_frames)
+            self.root.after(0, lambda: self._on_offline_verify_done(stats, output_path))
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_offline_verify_failed(exc))
+
+    def _on_offline_verify_done(self, stats: dict, output_path: str):
+        self._offline_verify_running = False
+        self.verify_run_btn.config(state=tk.NORMAL, text="Upload + Verify")
+
+        self._last_verified_output = output_path
+        self.verify_load_btn.config(state=tk.NORMAL)
+
+        summary = (
+            f"Done. Frames: {stats.get('frames_annotated', 0)} | "
+            f"Pose: {stats.get('pose_frames', 0)} | "
+            f"Consistency: {stats.get('mean_consistency_score', 0.0):.4f}"
+        )
+        self.verify_status_var.set(summary)
+
+        # Auto-load the annotated output into the app so rendered markers are visible in-app.
+        self.source_mode_var.set('file')
+        self.source_value_var.set(output_path)
+        self._apply_camera_source(output_path)
+
+        messagebox.showinfo(
+            "Offline Verification Complete",
+            f"Annotated video ready:\n{output_path}\n\n{summary}",
+        )
+
+    def _on_offline_verify_failed(self, exc: Exception):
+        self._offline_verify_running = False
+        self.verify_run_btn.config(state=tk.NORMAL, text="Upload + Verify")
+        self.verify_status_var.set("Offline verification failed.")
+        messagebox.showerror("Offline Verification Failed", str(exc))
+
+    def load_last_verified_output(self):
+        if not self._last_verified_output or not os.path.exists(self._last_verified_output):
+            messagebox.showwarning("No Output", "No verified output is available yet.")
+            return
+        self.source_mode_var.set('file')
+        self.source_value_var.set(self._last_verified_output)
+        self._apply_camera_source(self._last_verified_output)
 
     def _show_help_dialog(self):
         """Show a help dialog with metric definitions and equations."""
@@ -1396,9 +1681,10 @@ class MocapGUI:
     def _extract_metric_inputs(self, results):
         """Return (pose_lm, face_lm) as list[dict] from local or remote result formats."""
         if not isinstance(results, dict):
-            return [], []
+            return [], [], []
 
         pose_lm = []
+        world_lm = []
         face_lm = []
 
         pose_obj = results.get('pose')
@@ -1433,6 +1719,26 @@ class MocapGUI:
                             'v': float(lm.get('conf', lm.get('visibility', 1.0)))
                         })
 
+        pose_world_obj = results.get('pose')
+        if pose_world_obj and hasattr(pose_world_obj, 'pose_world_landmarks') and pose_world_obj.pose_world_landmarks:
+            world_lm = [
+                {'x': lm.x, 'y': lm.y, 'z': lm.z, 'v': getattr(lm, 'visibility', 1.0)}
+                for lm in pose_world_obj.pose_world_landmarks[0]
+            ]
+        else:
+            world_ser = results.get('pose_world_landmarks') or results.get('world_landmarks')
+            if isinstance(world_ser, list) and len(world_ser) > 0:
+                first = world_ser[0]
+                src = first if isinstance(first, list) else world_ser
+                for lm in src:
+                    if isinstance(lm, dict):
+                        world_lm.append({
+                            'x': float(lm.get('x', 0.0)),
+                            'y': float(lm.get('y', 0.0)),
+                            'z': float(lm.get('z', 0.0)),
+                            'v': float(lm.get('visibility', lm.get('v', 1.0)))
+                        })
+
         face_obj = results.get('face')
         if face_obj and hasattr(face_obj, 'face_landmarks') and face_obj.face_landmarks:
             face_lm = [{'x': lm.x, 'y': lm.y, 'z': lm.z} for lm in face_obj.face_landmarks[0]]
@@ -1449,37 +1755,71 @@ class MocapGUI:
                             'z': float(lm.get('z', 0.0))
                         })
 
-        return pose_lm, face_lm
+        return pose_lm, world_lm, face_lm
+
+    @staticmethod
+    def _format_metric_value(value, digits=4):
+        if value is None:
+            return "--"
+        try:
+            return f"{float(value):.{digits}f}"
+        except Exception:
+            return "--"
+
+    def _format_bone_triplet(self, metrics, base_key):
+        raw_key = base_key
+        norm_key = f"Normalized_{base_key}"
+        world_key = f"World_{base_key}"
+        return (
+            self._format_metric_value(metrics.get(raw_key)),
+            self._format_metric_value(metrics.get(norm_key)),
+            self._format_metric_value(metrics.get(world_key)),
+        )
 
     def _compute_stream_metrics(self, camera_key, results):
         """Compute smoothed metrics + kinematics for a specific camera stream."""
-        pose_lm, face_lm = self._extract_metric_inputs(results)
+        pose_lm, world_lm, face_lm = self._extract_metric_inputs(results)
         if not pose_lm:
             return None
 
-        body_metrics = Calculations.get_body_metrics(pose_lm)
+        source_landmarks = world_lm if world_lm else pose_lm
+        source_metrics = Calculations.get_body_metrics(source_landmarks)
+        angle_metrics = {
+            key: value for key, value in source_metrics.items()
+            if key.startswith('Angle_')
+        }
+
+        bone_tracker = self._bone_trackers.setdefault(camera_key, BoneLengthTracker())
+        bone_result = bone_tracker.process(pose_lm, world_lm)
+        bone_metrics = bone_result.get('metrics', {})
+        smoothed_landmarks = bone_result.get('smoothed_landmarks') or source_landmarks
+
+        world_metrics = {}
         face_metrics = Calculations.get_face_metrics(face_lm) if face_lm else {}
-        raw_metrics = {**body_metrics, **face_metrics}
-        norm_metrics = Calculations.normalize_metrics(raw_metrics, pose_lm)
+        combined_metrics = {
+            **angle_metrics,
+            **bone_metrics,
+            **face_metrics,
+        }
 
         state = self._metric_state.setdefault(camera_key, {'prev_lm': [], 'prev_metrics': {}, 'prev_time': None})
-        metrics = Calculations.filter_and_smooth(norm_metrics, state['prev_metrics'])
+        metrics = Calculations.filter_and_smooth(combined_metrics, state['prev_metrics'])
 
         now = time.time()
         if state['prev_time'] is not None:
             dt = now - state['prev_time']
             if dt > 0:
                 kinematics = Calculations.get_kinematics(
-                    pose_lm, state['prev_lm'], metrics, state['prev_metrics'], dt
+                    smoothed_landmarks, state['prev_lm'], metrics, state['prev_metrics'], dt
                 )
                 metrics.update(kinematics)
 
-        state['prev_lm'] = pose_lm
+        state['prev_lm'] = smoothed_landmarks
         state['prev_metrics'] = metrics
         state['prev_time'] = now
 
         if camera_key == 'local_cam':
-            self.prev_lm = pose_lm
+            self.prev_lm = smoothed_landmarks
             self.prev_metrics = metrics
             self.prev_time = now
 
@@ -1491,8 +1831,12 @@ class MocapGUI:
             
             # ── Capture ──
             t_cap_start = time.perf_counter()
-            self.camera.wait_for_frame(timeout=0.033)
-            frame = self.camera.read()
+            with self._camera_lock:
+                camera_ref = self.camera
+            if camera_ref is None:
+                continue
+            camera_ref.wait_for_frame(timeout=0.033)
+            frame = camera_ref.read()
             if frame is None:
                 continue
             t_cap_end = time.perf_counter()
@@ -1916,7 +2260,11 @@ class MocapGUI:
             pass
         if hasattr(self, '_master_compute_worker_thread'):
             self._master_compute_worker_thread.join(timeout=2.0)
-        if self.camera: self.camera.release()
+        with self._camera_lock:
+            camera_ref = self.camera
+            self.camera = None
+        if camera_ref:
+            camera_ref.release()
         if self.db: self.db.stop_recording()
         if self.network_server: self.network_server.stop()
         if self.coordinator: self.coordinator.stop()
@@ -1943,6 +2291,19 @@ class MocapGUI:
                 label_widget.config(text=f"{local_val:.2f}{unit}")
             else:
                 label_widget.config(text="0.0")
+
+        for key, widgets in self.bone_length_labels.items():
+            local_triplet = self._format_bone_triplet(local_metrics, key) if isinstance(local_metrics, dict) else ("--", "--", "--")
+            remote_triplet = self._format_bone_triplet(remote_metrics, key) if isinstance(remote_metrics, dict) else ("--", "--", "--")
+
+            if MULTI_CAMERA_MODE == 'master':
+                widgets[1].config(text=f"M:{local_triplet[0]} | W:{remote_triplet[0]}")
+                widgets[2].config(text=f"M:{local_triplet[1]} | W:{remote_triplet[1]}")
+                widgets[3].config(text=f"M:{local_triplet[2]} | W:{remote_triplet[2]}")
+            else:
+                widgets[1].config(text=local_triplet[0])
+                widgets[2].config(text=local_triplet[1])
+                widgets[3].config(text=local_triplet[2])
 
 
 if __name__ == "__main__":

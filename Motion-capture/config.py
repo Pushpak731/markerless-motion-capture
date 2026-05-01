@@ -1,5 +1,6 @@
 # Camera Settings
-CAMERA_ID = 0  # Device ID for cv2.VideoCapture (integer: 0, 1, 2, ...)
+CAMERA_ID = 0  # Legacy device ID for cv2.VideoCapture (integer: 0, 1, 2, ...)
+CAMERA_SOURCE = 0  # Can be an int device ID, file path, RTSP/MJPEG URL, or webcam/phone stream URL
 NETWORK_CAMERA_ID = 'cam_0'  # Network identifier (string: 'cam_0', 'cam_1', ...)
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
@@ -111,8 +112,13 @@ MAX_LINEAR_VELOCITY = 6.0   # Maximum limb velocity (m/s) - sanity check
 SMOOTHING_ALPHA_DEFAULT = 0.5   # Default EMA alpha for metrics
 SMOOTHING_ALPHA_FACE = 0.3      # Stronger smoothing for facial metrics
 
+# Bone Length Stabilization
+BONE_LENGTH_CALIBRATION_FRAMES = 30  # Number of frames used to learn fixed reference lengths
+BONE_LENGTH_EMA_ALPHA = 0.35         # EMA alpha for joint position smoothing before length calc
+BONE_LENGTH_MAX_DEVIATION = 0.20     # Soft clamp: allow ±20% deviation from reference length
+BONE_LENGTH_MIN_CONFIDENCE = 0.50    # Ignore/interpolate landmarks below this visibility
+
 # Normalization
-BODY_HEIGHT_MULTIPLIER = 2.0    # Multiply hip-ankle distance by this for full height
 IPD_DEFAULT = 0.065             # Default interpupillary distance (meters) if detection fails
 
 # --- Detector Toggles (Default States) ---

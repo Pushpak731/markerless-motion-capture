@@ -1,0 +1,12 @@
+{
+  "input_path": "/home/mrudula/Downloads/mocap/WhatsApp Video 2026-05-01 at 1.00.41 PM.mp4",
+  "output_path": "/home/mrudula/Downloads/mocap/Motion-capture/Motion-capture/data/offline_verify_test_annotated.mp4",
+  "fps": 30.0,
+  "frames_seen": 348,
+  "frames_annotated": 348,
+  "pose_frames": 257,
+  "face_frames": 0,
+  "hand_frames": 57,
+  "mean_consistency_score": 0.1413,
+  "processing_seconds": 17.486
+}

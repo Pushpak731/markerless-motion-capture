@@ -1,6 +1,17 @@
-# Motion Capture — Changes Log
+# Motion Capture - Changes Log
 
-**Last Updated**: 9 March 2026  
+**Last Updated**: 1 May 2026
+
+## Current Workspace Update
+
+- Cleaned the repo landing pages so GitHub starts from a shorter, clearer entry point.
+- Added and wired an offline video verification flow that writes annotated output video.
+- Generalized capture sources so the same pipeline accepts a webcam, a phone/IP stream, or a video file.
+- Reworked the bone-length path to prefer stabilized world-space metrics instead of frame-varying normalization.
+- Updated the setup and workflow docs to reflect the current capture and validation path.
+
+## Legacy Session History
+
 **Repos**: `Motion-capture/` (Mac master) · `Motion-capture-vs1/` (Windows server)
 
 ---

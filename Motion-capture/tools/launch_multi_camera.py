@@ -36,6 +36,8 @@ parser.add_argument('--mode', type=str, default='single',
                     help='Camera mode: single/server/master')
 parser.add_argument('--remote-ip', '--remote', dest='remote_ip', type=str, default=None,
                     help='IP address of remote camera (for master mode)')
+parser.add_argument('--camera-source', '--source', dest='camera_source', type=str, default=None,
+                    help='Local capture source for single/server mode: device index, file path, or stream URL')
 args = parser.parse_args()
 
 # Update config dynamically
@@ -62,6 +64,11 @@ try:
         else:
             print("WARNING: Master mode requires --remote-ip (or --remote) argument!")
             sys.exit(1)
+
+    if args.camera_source is not None:
+        camera_source = args.camera_source.strip()
+        config.CAMERA_SOURCE = int(camera_source) if camera_source.isdigit() else camera_source
+        print(f"[LAUNCHER] Camera source set to: {config.CAMERA_SOURCE}")
 
     print("[LAUNCHER] Importing GUI...")
     from main_gui import MocapGUI

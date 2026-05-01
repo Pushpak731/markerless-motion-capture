@@ -1,18 +1,25 @@
 import { useState, useEffect } from 'react'
-import { Coffee, Settings, Activity, Camera, Database, Download, FileText, Box } from 'lucide-react'
+import { Coffee, Settings, Activity, Camera, Database, Download, FileText, Box, Upload, Film } from 'lucide-react'
+
+const API_BASE = 'http://localhost:8000'
 
 function App() {
   const [fps, setFps] = useState(0)
   const [isConnected, setIsConnected] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [metrics, setMetrics] = useState({})
+  const [verifyFile, setVerifyFile] = useState(null)
+  const [maxFrames, setMaxFrames] = useState('')
+  const [isVerifying, setIsVerifying] = useState(false)
+  const [verifyResult, setVerifyResult] = useState(null)
+  const [verifyError, setVerifyError] = useState('')
 
   // Metrics Poller (Fast)
   useEffect(() => {
     if (!isConnected) return
     const fetchMetrics = async () => {
       try {
-        const res = await fetch('http://localhost:8000/metrics')
+        const res = await fetch(`${API_BASE}/metrics`)
         const data = await res.json()
         setMetrics(data)
       } catch (e) { }
@@ -25,7 +32,7 @@ function App() {
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const res = await fetch('http://localhost:8000/status')
+        const res = await fetch(`${API_BASE}/status`)
         const data = await res.json()
         setIsConnected(data.status === 'running')
         setIsRecording(data.recording)
@@ -41,7 +48,7 @@ function App() {
   const toggleRecording = async () => {
     try {
       const endpoint = isRecording ? 'stop' : 'start'
-      await fetch(`http://localhost:8000/record/${endpoint}`, { method: 'POST' })
+      await fetch(`${API_BASE}/record/${endpoint}`, { method: 'POST' })
       setIsRecording(!isRecording)
     } catch (e) {
       console.error(e)
@@ -49,12 +56,12 @@ function App() {
   }
 
   const handleDownload = () => {
-    window.open('http://localhost:8000/record/export', '_blank')
+    window.open(`${API_BASE}/record/export`, '_blank')
   }
 
   const generateReport = async () => {
     try {
-      const res = await fetch('http://localhost:8000/report/generate', { method: 'POST' })
+      const res = await fetch(`${API_BASE}/report/generate`, { method: 'POST' })
       const data = await res.json()
       if (data.status === 'success') {
         alert(`Report generated at:\n${data.path}`)
@@ -69,10 +76,45 @@ function App() {
 
   const startViz = async () => {
     try {
-      const res = await fetch('http://localhost:8000/viz/3d', { method: 'POST' })
+      const res = await fetch(`${API_BASE}/viz/3d`, { method: 'POST' })
       const data = await res.json()
       if (data.status !== 'success') alert(data.message)
     } catch (e) { console.error(e) }
+  }
+
+  const runOfflineVerification = async () => {
+    if (!verifyFile) {
+      setVerifyError('Pick a video file first.')
+      return
+    }
+
+    setIsVerifying(true)
+    setVerifyError('')
+    setVerifyResult(null)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', verifyFile)
+      if (maxFrames.trim()) {
+        formData.append('max_frames', String(Math.max(0, Number(maxFrames) || 0)))
+      }
+
+      const res = await fetch(`${API_BASE}/verify/upload`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      const data = await res.json()
+      if (!res.ok || data.status !== 'success') {
+        throw new Error(data.detail || data.message || 'Verification failed')
+      }
+
+      setVerifyResult(data)
+    } catch (err) {
+      setVerifyError(err.message || 'Upload failed')
+    } finally {
+      setIsVerifying(false)
+    }
   }
 
   return (
@@ -113,7 +155,7 @@ function App() {
             <div className={`relative group rounded-2xl overflow-hidden border-4 shadow-2xl bg-black aspect-video transition-colors duration-300 ${isRecording ? 'border-red-500/50' : 'border-mocha/30'}`}>
               {isConnected ? (
                 <img
-                  src="http://localhost:8000/video_feed"
+                  src={`${API_BASE}/video_feed`}
                   alt="Live Feed"
                   className="w-full h-full object-cover"
                 />
@@ -254,6 +296,68 @@ function App() {
                     Generate Report
                   </div>
                 </button>
+
+                <div className="mt-3 p-4 rounded-xl bg-gradient-to-br from-cyan-900/20 to-transparent border border-cyan-500/20 space-y-3">
+                  <h3 className="text-sm font-medium text-cyan-200 flex items-center gap-2">
+                    <Film className="w-4 h-4" />
+                    Offline Video Verify
+                  </h3>
+
+                  <input
+                    type="file"
+                    accept="video/*"
+                    onChange={(e) => {
+                      setVerifyFile(e.target.files?.[0] || null)
+                      setVerifyResult(null)
+                      setVerifyError('')
+                    }}
+                    className="w-full text-xs text-cyan-100 file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-700/30 file:px-3 file:py-2 file:text-cyan-100 hover:file:bg-cyan-700/40"
+                  />
+
+                  <div>
+                    <label className="text-xs text-cyan-100/80">Max frames (optional)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={maxFrames}
+                      onChange={(e) => setMaxFrames(e.target.value)}
+                      placeholder="0 = full video"
+                      className="mt-1 w-full bg-espresso border border-cyan-500/30 rounded-lg px-3 py-2 text-cream outline-none focus:ring-2 focus:ring-cyan-600/40"
+                    />
+                  </div>
+
+                  <button
+                    onClick={runOfflineVerification}
+                    disabled={isVerifying || !verifyFile}
+                    className="w-full bg-cyan-800/30 border border-cyan-500/40 hover:bg-cyan-800/45 text-cyan-100 font-bold py-2.5 rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <div className="flex items-center justify-center gap-2">
+                      <Upload className="w-4 h-4" />
+                      {isVerifying ? 'Processing...' : 'Upload and Verify'}
+                    </div>
+                  </button>
+
+                  {verifyError && (
+                    <p className="text-xs text-red-300">{verifyError}</p>
+                  )}
+
+                  {verifyResult?.summary && (
+                    <div className="text-xs text-cyan-50/90 space-y-1">
+                      <p>Frames: {verifyResult.summary.frames_annotated}</p>
+                      <p>Pose frames: {verifyResult.summary.pose_frames}</p>
+                      <p>Consistency: {verifyResult.summary.mean_consistency_score}</p>
+                      <a
+                        href={`${API_BASE}${verifyResult.annotated_video_url}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-cyan-200 underline underline-offset-2 hover:text-cyan-100"
+                      >
+                        <Download className="w-3 h-3" />
+                        Download annotated video
+                      </a>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
