@@ -379,8 +379,8 @@ class AvatarStudio(ShowBase):
             (h_l_hip_now['z'] + h_r_hip_now['z']) / 2.0,
             -((h_l_hip_now['y'] + h_r_hip_now['y']) / 2.0)
         )
-        # Calculate displacement and scale it (Mediapipe units are roughly meters but noisy)
-        root_delta = (h_root_now - self._human_root_start) * 2.0 
+        # Displacement scaled for natural human gait
+        root_delta = (h_root_now - self._human_root_start) * 1.5 
         self._avatar.setPos(root_delta[0], root_delta[1], root_delta[2])
 
         # 2. Process joints in a logical hierarchy (Local/Parent Space)
@@ -414,11 +414,19 @@ class AvatarStudio(ShowBase):
             h_delta_quat = LQuaternionf()
             axis = h_rest_vec.cross(h_now_vec)
             angle = h_rest_vec.angleDeg(h_now_vec)
+            
+            # --- NATURAL CONSTRAINTS & DAMPING ---
+            damping = 0.85 # Default for limbs
+            if 'torso' in bone_name or 'Spine' in bone_name:
+                damping = 0.35 # Torso is much stiffer
+            
+            angle *= damping
+
             if axis.length() > 1e-6:
                 axis.normalize()
                 h_delta_quat.setFromAxisAngle(angle, axis)
             elif h_rest_vec.dot(h_now_vec) < -0.99:
-                h_delta_quat.setFromAxisAngle(180, Vec3(0, 0, 1))
+                h_delta_quat.setFromAxisAngle(180 * damping, Vec3(0, 0, 1))
 
             # --- Avatar Side ---
             if bone_name not in self._bone_rest_data:
@@ -430,17 +438,18 @@ class AvatarStudio(ShowBase):
             confidence = min(h_now_start['v'], h_now_end['v'])
             rest_info = self._bone_rest_data[bone_name]
             
-            if confidence > 0.3:
+            if confidence > 0.35:
                 target_q = h_delta_quat * rest_info['initial_local_quat']
-                # Temporal smoothing (Lerp)
+                # Temporal smoothing (Alpha 0.2 for silkier motion)
                 current_q = bone_np.getQuat()
-                smooth_q = current_q * 0.7 + target_q * 0.3
+                smooth_q = current_q * 0.8 + target_q * 0.2
                 smooth_q.normalize()
                 bone_np.setQuat(smooth_q)
             else:
+                # Return to rest more aggressively if confidence is lost
                 current_q = bone_np.getQuat()
                 target_q = rest_info['initial_local_quat']
-                bone_np.setQuat(current_q * 0.9 + target_q * 0.1)
+                bone_np.setQuat(current_q * 0.85 + target_q * 0.15)
 
         # 3. Final Mesh Update
         if hasattr(self, '_avatar') and self._avatar:
