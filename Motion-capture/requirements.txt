@@ -17,3 +17,6 @@ scipy
 pyzmq>=25.0.0
 msgpack>=1.0.0
 psutil>=5.9.0       # RSS memory telemetry for ablation study
+panda3d>=1.10.14    # Local native 3D Engine for GLB Avatar Retargeting
+panda3d-gltf>=1.2.1 # GLTF/GLB loader for Panda3D
+panda3d-simplepbr   # PBR rendering for Panda3D

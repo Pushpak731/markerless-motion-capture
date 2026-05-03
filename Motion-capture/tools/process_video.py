@@ -128,6 +128,26 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
     max_interpolation_gap = 5
     pending_missing_frames = []
     long_gap_active = False
+
+    # --- Raw 3D Node Export (for local Panda3D avatar studio) ---
+    raw_nodes_csv_path = os.path.splitext(output_path)[0] + '_raw_3d_nodes.csv'
+    raw_nodes_file = open(raw_nodes_csv_path, 'w', newline='')
+    raw_nodes_writer = csv.writer(raw_nodes_file)
+    _raw_nodes_header = ['frame_idx', 'timestamp_ms']
+    MEDIAPIPE_JOINT_NAMES = [
+        'nose', 'left_eye_inner', 'left_eye', 'left_eye_outer',
+        'right_eye_inner', 'right_eye', 'right_eye_outer',
+        'left_ear', 'right_ear', 'mouth_left', 'mouth_right',
+        'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+        'left_wrist', 'right_wrist', 'left_pinky', 'right_pinky',
+        'left_index', 'right_index', 'left_thumb', 'right_thumb',
+        'left_hip', 'right_hip', 'left_knee', 'right_knee',
+        'left_ankle', 'right_ankle', 'left_heel', 'right_heel',
+        'left_foot_index', 'right_foot_index',
+    ]
+    for jname in MEDIAPIPE_JOINT_NAMES:
+        _raw_nodes_header += [f'{jname}_x', f'{jname}_y', f'{jname}_z', f'{jname}_v']
+    raw_nodes_writer.writerow(_raw_nodes_header)
     last_detected_pose = None
     last_detected_world = None
 
@@ -374,6 +394,15 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
             row.append(float(ref_map.get(f'Reference_Length_{bone_name}', 0.0)) if ref_map else 0.0)
         csv_writer.writerow(row)
 
+        # --- Write raw 3D world node coordinates ---
+        raw_row = [frame_idx_local, timestamp_local]
+        if world_lm and len(world_lm) == 33:
+            for lm in world_lm:
+                raw_row += [round(lm['x'], 6), round(lm['y'], 6), round(lm['z'], 6), round(lm.get('v', 1.0), 4)]
+        else:
+            raw_row += [0.0] * (33 * 4)
+        raw_nodes_writer.writerow(raw_row)
+
         return bone_result, render_results, detected_pose_coverage, usable_pose_coverage
 
 
@@ -567,6 +596,10 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
         writer.release()
         try:
             csv_file.close()
+        except Exception:
+            pass
+        try:
+            raw_nodes_file.close()
         except Exception:
             pass
 
