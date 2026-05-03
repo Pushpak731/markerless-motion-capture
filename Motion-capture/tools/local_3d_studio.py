@@ -43,7 +43,7 @@ MEDIAPIPE_JOINT_NAMES = [
 ]
 JOINT_IDX = {name: i for i, name in enumerate(MEDIAPIPE_JOINT_NAMES)}
 
-BONE_MAP = {
+BONE_MAP_MIXAMO = {
     'mixamorigLeftArm':       ('left_shoulder',   'left_elbow'),
     'mixamorigLeftForeArm':   ('left_elbow',      'left_wrist'),
     'mixamorigRightArm':      ('right_shoulder',  'right_elbow'),
@@ -55,6 +55,21 @@ BONE_MAP = {
     'mixamorigSpine':         ('left_hip',        'left_shoulder'),
     'mixamorigNeck':          ('left_shoulder',   'nose'),
 }
+
+BONE_MAP_CESIUM = {
+    'Skeleton_arm_joint_L__4_': ('left_shoulder',   'left_elbow'),
+    'Skeleton_arm_joint_L__3_': ('left_elbow',      'left_wrist'),
+    'Skeleton_arm_joint_R__4_': ('right_shoulder',  'right_elbow'),
+    'Skeleton_arm_joint_R__3_': ('right_elbow',     'right_wrist'),
+    'Skeleton_leg_joint_L__4_': ('left_hip',        'left_knee'),
+    'Skeleton_leg_joint_L__3_': ('left_knee',       'left_ankle'),
+    'Skeleton_leg_joint_R__4_': ('right_hip',       'right_knee'),
+    'Skeleton_leg_joint_R__3_': ('right_knee',      'right_ankle'),
+    'Skeleton_torso_joint_1':   ('left_hip',        'left_shoulder'),
+}
+
+# Default
+BONE_MAP = BONE_MAP_MIXAMO
 
 # ─── File Picker ─────────────────────────────────────────────────────────────
 
@@ -187,6 +202,15 @@ class AvatarStudio(ShowBase):
         self.render.setLight(fill_np)
 
     def _load_avatar(self, glb_path):
+        # Determine bone map based on filename
+        global BONE_MAP
+        if "CesiumMan" in glb_path:
+            BONE_MAP = BONE_MAP_CESIUM
+            print("[studio] Using CesiumMan bone mapping")
+        else:
+            BONE_MAP = BONE_MAP_MIXAMO
+            print("[studio] Using Mixamo bone mapping")
+
         try:
             # Load the model using the GLTF loader
             model_np = None
@@ -317,10 +341,11 @@ class AvatarStudio(ShowBase):
         self._frame_idx = frame_idx
 
         # Update HUD
+        status_text = "PLAYING" if self._playing else "PAUSED"
         self._hud_text.setText(
             f"Frame: {frame_idx + 1} / {len(self._frames)}\n"
             f"Time: {frame['timestamp_ms'] / 1000:.2f}s\n"
-            f"{'▶ PLAYING' if self._playing else '⏸ PAUSED'}"
+            f"Status: {status_text}"
         )
 
         # Retargeting: compute direction vector between joint pairs → quaternion → apply to bone
