@@ -357,62 +357,69 @@ class AvatarStudio(ShowBase):
             f"Status: {status_text}"
         )
 
-        for bone_name, (start_joint, end_joint) in BONE_MAP.items():
+        # 1. Initialize Rest Data (Capture Human rest pose on Frame 0)
+        if not hasattr(self, '_human_rest_joints'):
+            self._human_rest_joints = self._frames[0]['joints']
+            self._bone_rest_data = {} # Clear old world-space rest data
+
+        # 2. Process joints in a logical hierarchy (Local/Parent Space)
+        for bone_name, (start_joint_name, end_joint_name) in BONE_MAP.items():
             bone_np = self._controlled_joints.get(bone_name)
             if not bone_np:
                 continue
 
-            j_start = joints.get(start_joint)
-            j_end = joints.get(end_joint)
+            # Human Data
+            h_rest_start = self._human_rest_joints.get(start_joint_name)
+            h_rest_end = self._human_rest_joints.get(end_joint_name)
+            h_now_start = joints.get(start_joint_name)
+            h_now_end = joints.get(end_joint_name)
+
+            if not h_rest_start or not h_rest_end or not h_now_start or not h_now_end:
+                continue
+
+            # --- Human Motion Delta ---
+            # Map MediaPipe World (X-right, Y-down, Z-depth) to Panda3D Scene (X-right, Y-forward, Z-up)
+            def mp_to_p3d_vec(s, e):
+                return Vec3(e['x'] - s['x'], e['z'] - s['z'], -(e['y'] - s['y']))
+
+            h_rest_vec = mp_to_p3d_vec(h_rest_start, h_rest_end)
+            h_now_vec = mp_to_p3d_vec(h_now_start, h_now_end)
+
+            if h_rest_vec.length() < 1e-6 or h_now_vec.length() < 1e-6:
+                continue
             
-            if not j_start or not j_end:
-                if frame_idx % 30 == 0:
-                    print(f"[debug] Bone {bone_name} missing joints: {start_joint} or {end_joint}")
-                continue
+            h_rest_vec.normalize()
+            h_now_vec.normalize()
 
-            # Skip low-confidence joints
-            if j_start['v'] < 0.3 or j_end['v'] < 0.3:
-                if frame_idx % 30 == 0:
-                    print(f"[debug] Bone {bone_name} low confidence: {j_start['v']:.2f}, {j_end['v']:.2f}")
-                continue
+            # The Human's rotation from their start pose to now
+            h_delta_quat = LQuaternionf()
+            h_delta_quat.setShortestArc(h_rest_vec, h_now_vec)
 
-            # Direction vector from start to end joint (World Space)
-            dx = j_end['x'] - j_start['x']
-            dy = j_end['z'] - j_start['z']
-            dz = -(j_end['y'] - j_start['y'])
-            world_vec = Vec3(dx, dy, dz)
+            # --- Avatar Side ---
+            if bone_name not in self._bone_rest_data:
+                # Capture the Model's ORIGINAL local orientation (relative to parent)
+                self._bone_rest_data[bone_name] = {
+                    'initial_local_quat': bone_np.getQuat() 
+                }
+
+            # --- Apply with Confidence Fallback ---
+            confidence = min(h_now_start['v'], h_now_end['v'])
+            rest_info = self._bone_rest_data[bone_name]
             
-            if world_vec.length() < 1e-6:
-                continue
-            world_vec.normalize()
+            if confidence > 0.3:
+                # Apply the human's delta rotation to the bone's initial local orientation
+                # This moves the bone relative to its own parent!
+                bone_np.setQuat(h_delta_quat * rest_info['initial_local_quat'])
+                
+                if bone_name == 'Skeleton_arm_joint_R' and frame_idx % 30 == 0:
+                    print(f"[debug] Frame {frame_idx} | {bone_name} Retargeted. Conf: {confidence:.2f}")
+            else:
+                # Smoothly return to rest pose if confidence is lost
+                current_q = bone_np.getQuat()
+                target_q = rest_info['initial_local_quat']
+                bone_np.setQuat(current_q * 0.9 + target_q * 0.1)
 
-            # --- RELATIVE RETARGETING ---
-            try:
-                if not hasattr(self, '_bone_rest_data'):
-                    self._bone_rest_data = {}
-                
-                if bone_name not in self._bone_rest_data:
-                    self._bone_rest_data[bone_name] = {
-                        'rest_vec': world_vec,
-                        'rest_quat': bone_np.getQuat(self.render)
-                    }
-                
-                rest_info = self._bone_rest_data[bone_name]
-                delta_quat = LQuaternionf()
-                delta_quat.setShortestArc(rest_info['rest_vec'], world_vec)
-                
-                # Apply delta on top of original WORLD orientation
-                bone_np.setQuat(self.render, delta_quat * rest_info['rest_quat'])
-                
-                # Unified Telemetry (Watch ONE arm consistently)
-                if bone_name == 'Skeleton_arm_joint_R':
-                    cur_rot = bone_np.getQuat(self.render)
-                    print(f"[debug] Frame {frame_idx} | {bone_name} | vec: {world_vec} | rot: {cur_rot}")
-            except Exception as e:
-                print(f"[studio] MATH ERROR: {e}")
-                pass
-        
-        # Explicitly update the Actor
+        # 3. Final Mesh Update
         if hasattr(self, '_avatar') and self._avatar:
             self._avatar.update()
 
