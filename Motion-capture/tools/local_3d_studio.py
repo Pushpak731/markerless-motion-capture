@@ -218,22 +218,12 @@ class AvatarStudio(ShowBase):
             print("[studio] Using Mixamo bone mapping")
 
         try:
-            # Load the model using the GLTF loader
-            model_np = None
-            if hasattr(panda3d_gltf, 'load_model'):
-                model_np = panda3d_gltf.load_model(glb_path)
-            elif hasattr(panda3d_gltf, 'patch_loader'):
+            # Patch the loader to support GLTF if not already done
+            if hasattr(panda3d_gltf, 'patch_loader'):
                 panda3d_gltf.patch_loader(self.loader)
-                model_np = self.loader.loadModel(glb_path)
-            else:
-                model_np = self.loader.loadModel(glb_path)
 
-            if not model_np:
-                print(f"[studio] ERROR: Could not load model from {glb_path}")
-                return
-
-            # Wrap in Actor to enable joint control
-            self._avatar = Actor(model_np)
+            # Initialize Actor directly with the path
+            self._avatar = Actor(glb_path)
             self._avatar.reparentTo(self.render)
             self._avatar.setPos(0, 0, 0)
             self._avatar.setH(90)  # Face the camera (adjusted from 180)
