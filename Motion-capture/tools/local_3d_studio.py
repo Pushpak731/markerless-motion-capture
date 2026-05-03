@@ -342,7 +342,6 @@ class AvatarStudio(ShowBase):
         return task.cont
 
     def _apply_frame(self, frame_idx):
-        print(f"[studio] _apply_frame called. Controlled joints count: {len(self._controlled_joints)}")
         if not self._frames or not self._controlled_joints:
             return
 
@@ -358,7 +357,6 @@ class AvatarStudio(ShowBase):
             f"Status: {status_text}"
         )
 
-        # Retargeting: compute direction vector between joint pairs → quaternion → apply to bone
         for bone_name, (start_joint, end_joint) in BONE_MAP.items():
             bone_np = self._controlled_joints.get(bone_name)
             if not bone_np:
@@ -366,11 +364,16 @@ class AvatarStudio(ShowBase):
 
             j_start = joints.get(start_joint)
             j_end = joints.get(end_joint)
+            
             if not j_start or not j_end:
+                if frame_idx % 30 == 0:
+                    print(f"[debug] Bone {bone_name} missing joints: {start_joint} or {end_joint}")
                 continue
 
             # Skip low-confidence joints
             if j_start['v'] < 0.3 or j_end['v'] < 0.3:
+                if frame_idx % 30 == 0:
+                    print(f"[debug] Bone {bone_name} low confidence: {j_start['v']:.2f}, {j_end['v']:.2f}")
                 continue
 
             # Direction vector from start to end joint (World Space)
@@ -383,32 +386,30 @@ class AvatarStudio(ShowBase):
                 continue
             world_vec.normalize()
 
-            # --- RELATIVE RETARGETING (The "No-Pretzel" Fix) ---
+            # --- RELATIVE RETARGETING ---
             try:
-                # 1. Capture the "Rest Pose" on the very first frame
                 if not hasattr(self, '_bone_rest_data'):
                     self._bone_rest_data = {}
                 
                 if bone_name not in self._bone_rest_data:
-                    # Store initial world direction and initial WORLD rotation
                     self._bone_rest_data[bone_name] = {
                         'rest_vec': world_vec,
                         'rest_quat': bone_np.getQuat(self.render)
                     }
                 
-                # 2. Calculate the "Delta Rotation"
                 rest_info = self._bone_rest_data[bone_name]
                 delta_quat = LQuaternionf()
                 delta_quat.setShortestArc(rest_info['rest_vec'], world_vec)
                 
-                # 3. Apply the delta on top of the character's original WORLD orientation
+                # Apply delta on top of original WORLD orientation
                 bone_np.setQuat(self.render, delta_quat * rest_info['rest_quat'])
                 
-                # 4. Unified Telemetry (Watch ONE arm consistently)
+                # Unified Telemetry (Watch ONE arm consistently)
                 if bone_name == 'Skeleton_arm_joint_R':
                     cur_rot = bone_np.getQuat(self.render)
                     print(f"[debug] Frame {frame_idx} | {bone_name} | vec: {world_vec} | rot: {cur_rot}")
             except Exception as e:
+                print(f"[studio] MATH ERROR: {e}")
                 pass
         
         # Explicitly update the Actor
