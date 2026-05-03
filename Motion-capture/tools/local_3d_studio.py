@@ -61,11 +61,11 @@ BONE_MAP_CESIUM = {
     'Skeleton_arm_joint_L__3_': ('left_elbow',      'left_wrist'),
     'Skeleton_arm_joint_R':      ('right_shoulder',  'right_elbow'),
     'Skeleton_arm_joint_R__2_':  ('right_elbow',     'right_wrist'),
-    'Skeleton_leg_joint_L__4_': ('left_hip',        'left_knee'),
-    'Skeleton_leg_joint_L__3_': ('left_knee',       'left_ankle'),
-    'Skeleton_leg_joint_R':      ('right_hip',       'right_knee'),
-    'Skeleton_leg_joint_R__2_':  ('right_knee',      'right_ankle'),
-    'Skeleton_torso_joint_1':   ('left_hip',        'left_shoulder'),
+    'leg_joint_L_1':             ('left_hip',        'left_knee'),
+    'leg_joint_L_2':             ('left_knee',       'left_ankle'),
+    'leg_joint_R_1':             ('right_hip',       'right_knee'),
+    'leg_joint_R_2':             ('right_knee',      'right_ankle'),
+    'Skeleton_torso_joint_1':    ('left_hip',        'left_shoulder'),
 }
 
 # Default
