@@ -23,9 +23,10 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+# --- DEBUG OPTIONS ---
+DEBUG_ONLY_BONE = None # Set to e.g. 'Skeleton_arm_joint_L__4_' to isolate
+SHOW_DEBUG_SKELETON = True # Draw raw mocap points in 3D space
+# --------------------
 
 # ─── Mixamo Bone Mapping ────────────────────────────────────────────────────
 # Maps MediaPipe joint name pairs → Mixamo bone names
@@ -137,6 +138,11 @@ def load_csv_frames(csv_path):
             frames.append({
                 'frame_idx': int(row.get('frame_idx', 0)),
                 'timestamp_ms': float(row.get('timestamp_ms', 0)),
+                'root': {
+                    'x': float(row.get('root_x', 0.5)),
+                    'y': float(row.get('root_y', 0.5)),
+                    'z': float(row.get('root_z', 0)),
+                },
                 'joints': joints,
             })
     return frames
@@ -228,6 +234,10 @@ class AvatarStudio(ShowBase):
             self._avatar.setPos(0, 0, 0)
             self._avatar.setH(180) # Face the camera (Default for most GLBs)
             self._avatar.stop()    # Stop default animations
+            
+            if SHOW_DEBUG_SKELETON:
+                self._debug_np = self.render.attachNewNode("debug_skeleton")
+                self._debug_np.setPos(2, 0, 0) # Offset to the side
 
             # Debug: Print ALL joint names
             print("[studio] Full joint list found in model:")
@@ -362,119 +372,118 @@ class AvatarStudio(ShowBase):
             f"Time: {frame['timestamp_ms'] / 1000:.2f}s\n"
             f"Status: {status_text}"
         )
+        
+        # Helper for calculating vectors between joints
+        def joint_vec(js, a_name, b_name):
+            ja = js[a_name] if isinstance(a_name, str) else a_name
+            jb = js[b_name] if isinstance(b_name, str) else b_name
+            return Vec3(jb['x'] - ja['x'], -(jb['z'] - ja['z']), -(jb['y'] - ja['y']))
 
-        # 1. Initialize Rest Data (Capture Human rest pose on Frame 0)
-        if not hasattr(self, '_human_rest_joints'):
-            self._human_rest_joints = self._frames[0]['joints']
+        # Calculate midpoints for stable torso/root
+        l_hip, r_hip = joints['left_hip'], joints['right_hip']
+        l_sho, r_sho = joints['left_shoulder'], joints['right_shoulder']
+        
+        mid_hip = {
+            'x': (l_hip['x'] + r_hip['x']) / 2,
+            'y': (l_hip['y'] + r_hip['y']) / 2,
+            'z': (l_hip['z'] + r_hip['z']) / 2,
+        }
+        mid_sho = {
+            'x': (l_sho['x'] + r_sho['x']) / 2,
+            'y': (l_sho['y'] + r_sho['y']) / 2,
+            'z': (l_sho['z'] + r_sho['z']) / 2,
+        }
+
+        # 1. Root Translation (with Centering)
+        scale = 5.0
+        raw_root = Vec3(mid_hip['x'] * scale, -mid_hip['z'] * scale, -mid_hip['y'] * scale)
+        
+        if not hasattr(self, "_root_origin"):
+            self._root_origin = raw_root
+            self._avatar.setZ(0)
+
+        target_pos = raw_root - self._root_origin
+        if not hasattr(self, "_last_root_pos"): self._last_root_pos = target_pos
+        self._last_root_pos = self._last_root_pos * 0.8 + target_pos * 0.2
+        self._avatar.setPos(self._last_root_pos)
+
+        # 2. Capture Human Rest Pose (Frame 0)
+        if frame_idx == 0:
+            self._human_rest_joints = joints
+            self._human_rest_mid_hip = mid_hip
+            self._human_rest_mid_sho = mid_sho
             self._bone_rest_data = {} 
-            # Capture human root start (average of hips)
-            h_l_hip = self._human_rest_joints['left_hip']
-            h_r_hip = self._human_rest_joints['right_hip']
-            self._human_root_start = Vec3(
-                (h_l_hip['x'] + h_r_hip['x']) / 2.0,
-                (h_l_hip['z'] + h_r_hip['z']) / 2.0,
-                -((h_l_hip['y'] + h_r_hip['y']) / 2.0)
-            )
 
-        # --- Root Translation (Disabled for Stability) ---
-        h_l_hip_now = joints['left_hip']
-        h_r_hip_now = joints['right_hip']
-        h_root_now = Vec3(
-            (h_l_hip_now['x'] + h_r_hip_now['x']) / 2.0,
-            (h_l_hip_now['z'] + h_r_hip_now['z']) / 2.0,
-            -((h_l_hip_now['y'] + h_r_hip_now['y']) / 2.0)
-        )
-        # We calculate it but DON'T apply it yet to avoid the "swimming" effect
-        root_delta = (h_root_now - self._human_root_start) * 0.5
-        # self._avatar.setPos(root_delta[0], root_delta[1], root_delta[2])
-
-        # 2. Process joints in a logical hierarchy (Local/Parent Space)
-        for bone_name, (start_joint_name, end_joint_name) in BONE_MAP.items():
+        # 3. Process Bones
+        for bone_name, (start_name, end_name) in BONE_MAP.items():
+            if DEBUG_ONLY_BONE and bone_name != DEBUG_ONLY_BONE:
+                continue
+                
             bone_np = self._controlled_joints.get(bone_name)
-            if not bone_np:
-                continue
+            if not bone_np: continue
 
-            # Human Data
-            h_rest_start = self._human_rest_joints.get(start_joint_name)
-            h_rest_end = self._human_rest_joints.get(end_joint_name)
-            h_now_start = joints.get(start_joint_name)
-            h_now_end = joints.get(end_joint_name)
+            # Special Case: Torso uses midpoints
+            if 'torso' in bone_name or 'Spine' in bone_name:
+                h_rest_vec = joint_vec({'h': self._human_rest_mid_hip, 's': self._human_rest_mid_sho}, 'h', 's')
+                h_now_vec = joint_vec({'h': mid_hip, 's': mid_sho}, 'h', 's')
+                conf = 1.0
+            else:
+                h_rest_vec = joint_vec(self._human_rest_joints, start_name, end_name)
+                h_now_vec = joint_vec(joints, start_name, end_name)
+                conf = min(joints[start_name]['v'], joints[end_name]['v'])
 
-            if not h_rest_start or not h_rest_end or not h_now_start or not h_now_end:
-                continue
-
-            # --- Human Motion Delta ---
-            # Stable Mapping: X=Right, Y=Depth(Inverted), Z=Up(Inverted)
-            def mp_to_p3d_vec(s, e):
-                return Vec3(e['x'] - s['x'], -(e['z'] - s['z']), -(e['y'] - s['y']))
-
-            h_rest_vec = mp_to_p3d_vec(h_rest_start, h_rest_end)
-            h_now_vec = mp_to_p3d_vec(h_now_start, h_now_end)
-
-            if h_rest_vec.length() < 1e-6 or h_now_vec.length() < 1e-6:
-                continue
+            if h_rest_vec.length() < 1e-6 or h_now_vec.length() < 1e-6: continue
             
             h_rest_vec.normalize()
             h_now_vec.normalize()
 
-            h_delta_quat = LQuaternionf()
             axis = h_rest_vec.cross(h_now_vec)
             angle = h_rest_vec.angleDeg(h_now_vec)
             
-            # --- NATURAL CONSTRAINTS & DAMPING ---
-            # Define hard limits (in degrees) to prevent "bone breaking" poses
-            JOINT_LIMITS = {
-                'torso': 25,
-                'Spine': 25,
-                'leg': 85,
-                'arm': 115,
-            }
+            limit = 120
+            if 'torso' in bone_name: limit = 25
+            elif 'leg' in bone_name: limit = 90
             
-            max_angle = 120 # Default
-            for key, limit in JOINT_LIMITS.items():
-                if key in bone_name:
-                    max_angle = limit
-                    break
+            damping = 0.8 if limit > 30 else 0.4
+            final_angle = min(max(angle * damping, -limit), limit)
 
-            damping = 0.8
-            if max_angle < 30:
-                damping = 0.4 # More damping for stiff joints (torso)
-            
-            # Clamp the angle to prevent extreme poses
-            final_angle = min(max(angle * damping, -max_angle), max_angle)
-
+            h_delta_quat = LQuaternionf()
             if axis.length() > 1e-6:
                 axis.normalize()
                 h_delta_quat.setFromAxisAngle(final_angle, axis)
-            elif h_rest_vec.dot(h_now_vec) < -0.99:
-                h_delta_quat.setFromAxisAngle(min(180 * damping, max_angle), Vec3(0, 0, 1))
 
-            # --- Avatar Side ---
             if bone_name not in self._bone_rest_data:
-                self._bone_rest_data[bone_name] = {
-                    'initial_local_quat': bone_np.getQuat() 
-                }
-
-            # --- Apply with High Smoothing (Slerp-like) ---
-            confidence = min(h_now_start['v'], h_now_end['v'])
-            rest_info = self._bone_rest_data[bone_name]
+                self._bone_rest_data[bone_name] = {'initial_local_quat': bone_np.getQuat()}
             
-            if confidence > 0.35:
-                target_q = h_delta_quat * rest_info['initial_local_quat']
-                current_q = bone_np.getQuat()
-                # Panda3D Quat Lerp/Slerp logic
-                alpha = 0.15 
-                smooth_q = current_q * (1.0 - alpha) + target_q * alpha
-                smooth_q.normalize()
-                bone_np.setQuat(smooth_q)
-            else:
-                current_q = bone_np.getQuat()
-                target_q = rest_info['initial_local_quat']
-                bone_np.setQuat(current_q * 0.9 + target_q * 0.1)
+            rest_info = self._bone_rest_data[bone_name]
+            target_q = h_delta_quat * rest_info['initial_local_quat']
+            
+            alpha = 0.15 if conf > 0.4 else 0.05
+            current_q = bone_np.getQuat()
+            smooth_q = current_q * (1.0 - alpha) + target_q * alpha
+            smooth_q.normalize()
+            bone_np.setQuat(smooth_q)
 
-        # 3. Final Mesh Update
-        if hasattr(self, '_avatar') and self._avatar:
-            self._avatar.update()
+        self._avatar.update()
+        if SHOW_DEBUG_SKELETON:
+            self._draw_debug_skeleton(joints, mid_hip, mid_sho)
+
+    def _draw_debug_skeleton(self, joints, mid_hip, mid_sho):
+        from panda3d.core import LineSegs
+        self._debug_np.node().removeAllChildren()
+        ls = LineSegs()
+        ls.setThickness(2.0)
+        s = 2.0
+        def p(j): return Vec3(j['x']*s, -j['z']*s, -j['y']*s)
+        ls.setColor(1, 1, 0, 1)
+        ls.moveTo(p(mid_hip))
+        ls.drawTo(p(mid_sho))
+        ls.setColor(0, 1, 1, 1)
+        for _, (start, end) in BONE_MAP.items():
+            if isinstance(start, str) and isinstance(end, str):
+                ls.moveTo(p(joints[start]))
+                ls.drawTo(p(joints[end]))
+        self._debug_np.attachNewNode(ls.create())
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
