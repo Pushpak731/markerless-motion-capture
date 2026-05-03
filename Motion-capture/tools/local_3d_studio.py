@@ -393,7 +393,14 @@ class AvatarStudio(ShowBase):
 
             # The Human's rotation from their start pose to now
             h_delta_quat = LQuaternionf()
-            h_delta_quat.setShortestArc(h_rest_vec, h_now_vec)
+            axis = h_rest_vec.cross(h_now_vec)
+            angle = h_rest_vec.angleDeg(h_now_vec)
+            if axis.length() > 1e-6:
+                axis.normalize()
+                h_delta_quat.setFromAxisAngle(angle, axis)
+            elif h_rest_vec.dot(h_now_vec) < -0.99:
+                # 180-degree turn case
+                h_delta_quat.setFromAxisAngle(180, Vec3(0, 0, 1))
 
             # --- Avatar Side ---
             if bone_name not in self._bone_rest_data:
