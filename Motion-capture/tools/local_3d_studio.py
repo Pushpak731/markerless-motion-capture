@@ -345,12 +345,6 @@ class AvatarStudio(ShowBase):
         if not self._frames or not self._controlled_joints:
             return
 
-        # Heartbeat to prove the loop is running
-        if frame_idx % 30 == 0:
-            bone_name = list(self._controlled_joints.keys())[0]
-            bone_np = self._controlled_joints[bone_name]
-            print(f"[studio] Heartbeat: Frame {frame_idx} | {bone_name} pos: {bone_np.getPos()} | rot: {bone_np.getQuat()}")
-
         frame = self._frames[frame_idx]
         joints = frame['joints']
         self._frame_idx = frame_idx
@@ -395,23 +389,24 @@ class AvatarStudio(ShowBase):
                     self._bone_rest_data = {}
                 
                 if bone_name not in self._bone_rest_data:
-                    # Store initial world direction and initial local rotation
+                    # Store initial world direction and initial WORLD rotation
                     self._bone_rest_data[bone_name] = {
                         'rest_vec': world_vec,
-                        'rest_quat': bone_np.getQuat()
+                        'rest_quat': bone_np.getQuat(self.render)
                     }
                 
-                # 2. Calculate the "Delta Rotation" (How much did the human move vs their start?)
+                # 2. Calculate the "Delta Rotation"
                 rest_info = self._bone_rest_data[bone_name]
                 delta_quat = LQuaternionf()
                 delta_quat.setShortestArc(rest_info['rest_vec'], world_vec)
                 
-                # 3. Apply the delta on top of the character's original orientation
-                # We apply the rotation in WORLD space, then let Panda3D handle the parent/child hierarchy
+                # 3. Apply the delta on top of the character's original WORLD orientation
                 bone_np.setQuat(self.render, delta_quat * rest_info['rest_quat'])
                 
+                # 4. Unified Telemetry (Watch ONE arm consistently)
                 if frame_idx % 30 == 0 and bone_name == 'Skeleton_arm_joint_R':
-                    print(f"[debug] Frame {frame_idx} | {bone_name} delta: {delta_quat}")
+                    cur_rot = bone_np.getQuat(self.render)
+                    print(f"[debug] Frame {frame_idx} | {bone_name} | vec: {world_vec} | rot: {cur_rot}")
             except Exception as e:
                 pass
         
