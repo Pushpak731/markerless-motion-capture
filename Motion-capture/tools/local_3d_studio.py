@@ -376,7 +376,7 @@ class AvatarStudio(ShowBase):
                 -((h_l_hip['y'] + h_r_hip['y']) / 2.0)
             )
 
-        # --- Root Translation (Forward/Backward Motion) ---
+        # --- Root Translation (Disabled for Stability) ---
         h_l_hip_now = joints['left_hip']
         h_r_hip_now = joints['right_hip']
         h_root_now = Vec3(
@@ -384,9 +384,9 @@ class AvatarStudio(ShowBase):
             (h_l_hip_now['z'] + h_r_hip_now['z']) / 2.0,
             -((h_l_hip_now['y'] + h_r_hip_now['y']) / 2.0)
         )
-        # Displacement scaled for natural human gait
-        root_delta = (h_root_now - self._human_root_start) * 1.5 
-        self._avatar.setPos(root_delta[0], root_delta[1], root_delta[2])
+        # We calculate it but DON'T apply it yet to avoid the "swimming" effect
+        root_delta = (h_root_now - self._human_root_start) * 0.5
+        # self._avatar.setPos(root_delta[0], root_delta[1], root_delta[2])
 
         # 2. Process joints in a logical hierarchy (Local/Parent Space)
         for bone_name, (start_joint_name, end_joint_name) in BONE_MAP.items():
@@ -404,8 +404,9 @@ class AvatarStudio(ShowBase):
                 continue
 
             # --- Human Motion Delta ---
+            # Stable Mapping: X=Right, Y=Depth(Inverted), Z=Up(Inverted)
             def mp_to_p3d_vec(s, e):
-                return Vec3(e['x'] - s['x'], e['z'] - s['z'], -(e['y'] - s['y']))
+                return Vec3(e['x'] - s['x'], -(e['z'] - s['z']), -(e['y'] - s['y']))
 
             h_rest_vec = mp_to_p3d_vec(h_rest_start, h_rest_end)
             h_now_vec = mp_to_p3d_vec(h_now_start, h_now_end)
@@ -421,9 +422,9 @@ class AvatarStudio(ShowBase):
             angle = h_rest_vec.angleDeg(h_now_vec)
             
             # --- NATURAL CONSTRAINTS & DAMPING ---
-            damping = 0.85 # Default for limbs
+            damping = 0.8
             if 'torso' in bone_name or 'Spine' in bone_name:
-                damping = 0.35 # Torso is much stiffer
+                damping = 0.3
             
             angle *= damping
 
@@ -439,22 +440,21 @@ class AvatarStudio(ShowBase):
                     'initial_local_quat': bone_np.getQuat() 
                 }
 
-            # --- Apply with Confidence & Smoothing ---
+            # --- Apply with High Smoothing ---
             confidence = min(h_now_start['v'], h_now_end['v'])
             rest_info = self._bone_rest_data[bone_name]
             
-            if confidence > 0.35:
+            if confidence > 0.3:
                 target_q = h_delta_quat * rest_info['initial_local_quat']
-                # Temporal smoothing (Alpha 0.2 for silkier motion)
+                # Ultra-smooth temporal interpolation
                 current_q = bone_np.getQuat()
-                smooth_q = current_q * 0.8 + target_q * 0.2
+                smooth_q = current_q * 0.9 + target_q * 0.1 
                 smooth_q.normalize()
                 bone_np.setQuat(smooth_q)
             else:
-                # Return to rest more aggressively if confidence is lost
                 current_q = bone_np.getQuat()
                 target_q = rest_info['initial_local_quat']
-                bone_np.setQuat(current_q * 0.85 + target_q * 0.15)
+                bone_np.setQuat(current_q * 0.95 + target_q * 0.05)
 
         # 3. Final Mesh Update
         if hasattr(self, '_avatar') and self._avatar:
