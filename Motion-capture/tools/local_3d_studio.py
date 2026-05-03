@@ -257,14 +257,14 @@ class AvatarStudio(ShowBase):
             available_joints = {j.getName() for j in self._avatar.getJoints()}
             for bone_name in BONE_MAP:
                 if bone_name in available_joints:
-                    # Some models need 'modelRoot', others None
-                    bone_np = self._avatar.controlJoint(None, 'modelRoot', bone_name)
+                    # Switch to exposeJoint to get the actual joint node
+                    bone_np = self._avatar.exposeJoint(None, 'modelRoot', bone_name)
                     if not bone_np or bone_np.isEmpty():
-                         bone_np = self._avatar.controlJoint(None, 'model', bone_name)
+                         bone_np = self._avatar.exposeJoint(None, 'model', bone_name)
                     
                     if bone_np and not bone_np.isEmpty():
                         self._controlled_joints[bone_name] = bone_np
-                        print(f"  [studio] Successfully controlling: {bone_name}")
+                        print(f"  [studio] Successfully exposed: {bone_name}")
                 else:
                     print(f"  [studio] Skipping missing joint: {bone_name}")
 
@@ -399,6 +399,10 @@ class AvatarStudio(ShowBase):
                     print(f"[debug] Frame {frame_idx} | {bone_name} vec: {vec}")
             except Exception as e:
                 pass
+        
+        # Explicitly update the Actor to reflect manual joint changes
+        if hasattr(self, '_avatar') and self._avatar:
+            self._avatar.update()
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
