@@ -132,9 +132,12 @@ try:
     )
     import gltf as panda3d_gltf
 except ImportError as e:
-    print(f"[studio] ERROR: Panda3D is not installed: {e}")
-    print("Install with:  pip install panda3d panda3d-gltf")
-    sys.exit(1)
+    try:
+        import panda3d_gltf
+    except ImportError:
+        print(f"[studio] ERROR: Panda3D GLTF loader is not installed: {e}")
+        print("Install with:  pip install panda3d-gltf")
+        sys.exit(1)
 
 
 class AvatarStudio(ShowBase):
@@ -184,7 +187,16 @@ class AvatarStudio(ShowBase):
 
     def _load_avatar(self, glb_path):
         try:
-            self._avatar = panda3d_gltf.load_model(glb_path)
+            # Handle different versions of panda3d-gltf
+            if hasattr(panda3d_gltf, 'load_model'):
+                self._avatar = panda3d_gltf.load_model(glb_path)
+            elif hasattr(panda3d_gltf, 'patch_loader'):
+                panda3d_gltf.patch_loader(self.loader)
+                self._avatar = self.loader.loadModel(glb_path)
+            else:
+                # Fallback to direct load if possible
+                self._avatar = self.loader.loadModel(glb_path)
+                
             self._avatar.reparentTo(self.render)
             self._avatar.setPos(0, 0, 0)
 
@@ -237,7 +249,7 @@ class AvatarStudio(ShowBase):
             mayChange=True,
         )
         OnscreenText(
-            text="[Space] Play/Pause | [←/→] Step | [R] Restart | [Esc] Quit",
+            text="[Space] Play/Pause | [<- / ->] Step | [R] Restart | [Esc] Quit",
             pos=(0, -0.93),
             scale=0.035,
             fg=(0.6, 0.6, 0.6, 1),
