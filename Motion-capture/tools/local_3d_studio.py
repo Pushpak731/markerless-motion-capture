@@ -253,16 +253,21 @@ class AvatarStudio(ShowBase):
 
             # Map bones using controlJoint on the Actor
             for bone_name in BONE_MAP:
-                # Some models need 'modelRoot', others None
-                bone_np = self._avatar.controlJoint(None, 'modelRoot', bone_name)
-                if not bone_np:
-                     bone_np = self._avatar.controlJoint(None, 'model', bone_name)
-                
-                if bone_np and not bone_np.isEmpty():
-                    self._controlled_joints[bone_name] = bone_np
-                    print(f"  [studio] Successfully controlling: {bone_name}")
+                # Check if joint exists first
+                if not self._avatar.find(f"**/{bone_name}").isEmpty():
+                    # Some models need 'modelRoot', others None
+                    bone_np = self._avatar.controlJoint(None, 'modelRoot', bone_name)
+                    if not bone_np or bone_np.isEmpty():
+                         bone_np = self._avatar.controlJoint(None, 'model', bone_name)
+                    
+                    if bone_np and not bone_np.isEmpty():
+                        self._controlled_joints[bone_name] = bone_np
+                        print(f"  [studio] Successfully controlling: {bone_name}")
+                    else:
+                        print(f"  [studio] Skipping missing joint: {bone_name}")
                 else:
-                    print(f"  [studio] Skipping missing joint: {bone_name}")
+                    # Case-insensitive or prefix check if needed
+                    pass
 
             print(f"[studio] Model loaded: {os.path.basename(glb_path)}")
             print(f"[studio] Bones successfully controlled: {len(self._controlled_joints)} / {len(BONE_MAP)}")
