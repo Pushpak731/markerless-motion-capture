@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=MoCap 3D Studio
+Comment=Native 3D Avatar Retargeting Studio
+Exec=/home/mrudula/Downloads/mocap/Motion-capture/Motion-capture/launch_studio.sh
+Icon=video-display
+Terminal=true
+Categories=Graphics;3DGraphics;
+StartupNotify=true
+Path=/home/mrudula/Downloads/mocap/Motion-capture/Motion-capture
