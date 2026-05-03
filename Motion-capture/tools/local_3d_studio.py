@@ -197,21 +197,42 @@ class AvatarStudio(ShowBase):
         self.taskMgr.add(self._update_task, 'update')
 
     def _setup_lights(self):
+        # MoCapAnything V2 Style: Bright, clean, subtle shadows
+        self.setBackgroundColor(0.92, 0.92, 0.95, 1) # Sleek off-white/blue tint
+        
         ambient = AmbientLight('ambient')
-        ambient.setColor(Vec4(0.4, 0.4, 0.45, 1))
+        ambient.setColor(Vec4(0.5, 0.5, 0.55, 1))
         self.render.setLight(self.render.attachNewNode(ambient))
 
         sun = DirectionalLight('sun')
-        sun.setColor(Vec4(1, 0.98, 0.9, 1))
+        sun.setColor(Vec4(0.8, 0.8, 0.75, 1))
         sun_np = self.render.attachNewNode(sun)
-        sun_np.setHpr(45, -60, 0)
+        sun_np.setHpr(45, -65, 0)
         self.render.setLight(sun_np)
+        
+        # Shadow Mapping
+        sun.setShadowCaster(True, 2048, 2048)
+        self.render.setShaderAuto()
+        
+        # Grid Floor
+        self._create_grid()
 
-        fill = DirectionalLight('fill')
-        fill.setColor(Vec4(0.3, 0.35, 0.5, 1))
-        fill_np = self.render.attachNewNode(fill)
-        fill_np.setHpr(-135, -20, 0)
-        self.render.setLight(fill_np)
+    def _create_grid(self):
+        from panda3d.core import LineSegs
+        ls = LineSegs()
+        ls.setThickness(1.0)
+        ls.setColor(0.7, 0.7, 0.75, 1)
+        
+        size = 50 # Large room scale
+        for i in range(-size, size + 1):
+            ls.moveTo(i, -size, 0)
+            ls.drawTo(i, size, 0)
+            ls.moveTo(-size, i, 0)
+            ls.drawTo(size, i, 0)
+        
+        grid_np = self.render.attachNewNode(ls.create())
+        grid_np.setTwoSided(True)
+        grid_np.setZ(-0.01)
 
     def _load_avatar(self, glb_path):
         # Determine bone map based on filename
@@ -229,11 +250,12 @@ class AvatarStudio(ShowBase):
                 panda3d_gltf.patch_loader(self.loader)
 
             # Initialize Actor directly with the path
+            self._avatar_root = self.render.attachNewNode("avatar_root")
             self._avatar = Actor(glb_path)
-            self._avatar.reparentTo(self.render)
+            self._avatar.reparentTo(self._avatar_root)
             self._avatar.setPos(0, 0, 0)
-            self._avatar.setH(180) # Face the camera (Default for most GLBs)
-            self._avatar.stop()    # Stop default animations
+            self._avatar.setH(180) 
+            self._avatar.stop()
             
             if SHOW_DEBUG_SKELETON:
                 self._debug_np = self.render.attachNewNode("debug_skeleton")
@@ -281,7 +303,7 @@ class AvatarStudio(ShowBase):
 
     def _setup_camera(self):
         self.disableMouse()
-        self.camera.setPos(0, -4, 1.5)
+        self.camera.setPos(0, -6, 2.0)
         self.camera.lookAt(0, 0, 1.0)
 
     def _setup_controls(self):
@@ -379,7 +401,7 @@ class AvatarStudio(ShowBase):
             jb = js[b_name] if isinstance(b_name, str) else b_name
             return Vec3(
                 jb['x'] - ja['x'],
-                jb['z'] - ja['z'],
+                -(jb['z'] - ja['z']),
                 -(jb['y'] - ja['y'])
             )
 
@@ -406,17 +428,23 @@ class AvatarStudio(ShowBase):
         raw_root = Vec3(root_x, root_y, root_z)
         
         if not hasattr(self, "_root_origin"):
-            # Only set origin if we have decent hip visibility
             if joints['left_hip']['v'] > 0.5 and joints['right_hip']['v'] > 0.5:
                 self._root_origin = raw_root
-                print(f"[studio] Root Origin initialized at frame {frame_idx}: {self._root_origin}")
+                print(f"[studio] Root Origin initialized: {self._root_origin}")
             else:
-                return # Wait for clean data
+                return
 
         target_pos = raw_root - self._root_origin
         if not hasattr(self, "_last_root_pos"): self._last_root_pos = target_pos
         self._last_root_pos = self._last_root_pos * 0.7 + target_pos * 0.3
-        self._avatar.setPos(self._last_root_pos[0], self._last_root_pos[1], 0)
+        
+        # Apply translation to the root node
+        self._avatar_root.setPos(self._last_root_pos[0], self._last_root_pos[1], 0)
+        
+        # Smooth Camera Tracking
+        cam_target = self._avatar_root.getPos() + Vec3(0, -5, 1.5)
+        self.camera.setPos(self.camera.getPos() * 0.9 + cam_target * 0.1)
+        self.camera.lookAt(self._avatar_root.getPos() + Vec3(0, 0, 1))
 
         # 2. Capture Rest Data (Search for first "Clean" frame)
         if not hasattr(self, "_human_rest_joints"):
