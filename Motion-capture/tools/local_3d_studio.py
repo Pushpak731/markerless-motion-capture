@@ -69,6 +69,28 @@ BONE_MAP_CESIUM = {
     'Skeleton_torso_joint_1':    ('left_hip',        'left_shoulder'),
 }
 
+BONE_RETARGET_SPECS = {
+    'mixamorigLeftArm':        {'gain': 0.55, 'limit': 60, 'alpha': 0.16},
+    'mixamorigLeftForeArm':    {'gain': 0.40, 'limit': 45, 'alpha': 0.12},
+    'mixamorigRightArm':       {'gain': 0.55, 'limit': 60, 'alpha': 0.16},
+    'mixamorigRightForeArm':   {'gain': 0.40, 'limit': 45, 'alpha': 0.12},
+    'mixamorigLeftUpLeg':      {'gain': 0.22, 'limit': 35, 'alpha': 0.07, 'invert': True},
+    'mixamorigLeftLeg':        {'gain': 0.16, 'limit': 25, 'alpha': 0.05, 'invert': True},
+    'mixamorigRightUpLeg':     {'gain': 0.22, 'limit': 35, 'alpha': 0.07, 'invert': True},
+    'mixamorigRightLeg':       {'gain': 0.16, 'limit': 25, 'alpha': 0.05, 'invert': True},
+    'mixamorigSpine':          {'gain': 0.35, 'limit': 30, 'alpha': 0.10},
+    'mixamorigNeck':           {'gain': 0.28, 'limit': 25, 'alpha': 0.10},
+    'Skeleton_arm_joint_L__4_': {'gain': 0.55, 'limit': 60, 'alpha': 0.16},
+    'Skeleton_arm_joint_L__3_': {'gain': 0.40, 'limit': 45, 'alpha': 0.12},
+    'Skeleton_arm_joint_R':     {'gain': 0.55, 'limit': 60, 'alpha': 0.16},
+    'Skeleton_arm_joint_R__2_': {'gain': 0.40, 'limit': 45, 'alpha': 0.12},
+    'leg_joint_L_1':            {'gain': 0.22, 'limit': 35, 'alpha': 0.07, 'invert': True},
+    'leg_joint_L_2':            {'gain': 0.16, 'limit': 25, 'alpha': 0.05, 'invert': True},
+    'leg_joint_R_1':            {'gain': 0.22, 'limit': 35, 'alpha': 0.07, 'invert': True},
+    'leg_joint_R_2':            {'gain': 0.16, 'limit': 25, 'alpha': 0.05, 'invert': True},
+    'Skeleton_torso_joint_1':   {'gain': 0.35, 'limit': 30, 'alpha': 0.10},
+}
+
 # Default
 BONE_MAP = BONE_MAP_MIXAMO
 
@@ -148,6 +170,55 @@ def load_csv_frames(csv_path):
     return frames
 
 
+def get_bone_spec(bone_name):
+    spec = BONE_RETARGET_SPECS.get(bone_name, {})
+    return {
+        'gain': spec.get('gain', 0.35),
+        'limit': spec.get('limit', 40),
+        'alpha': spec.get('alpha', 0.10),
+        'invert': spec.get('invert', False),
+    }
+
+
+def frame_to_pose_state(frame):
+    joints = frame['joints']
+    l_hip, r_hip = joints['left_hip'], joints['right_hip']
+    l_sho, r_sho = joints['left_shoulder'], joints['right_shoulder']
+
+    mid_hip = {
+        'x': (l_hip['x'] + r_hip['x']) / 2,
+        'y': (l_hip['y'] + r_hip['y']) / 2,
+        'z': (l_hip['z'] + r_hip['z']) / 2,
+    }
+    mid_sho = {
+        'x': (l_sho['x'] + r_sho['x']) / 2,
+        'y': (l_sho['y'] + r_sho['y']) / 2,
+        'z': (l_sho['z'] + r_sho['z']) / 2,
+    }
+
+    return {
+        'joints': joints,
+        'mid_hip': mid_hip,
+        'mid_sho': mid_sho,
+        'root': frame.get('root', {}),
+        'confidence': {
+            'hip': min(l_hip['v'], r_hip['v']),
+            'shoulder': min(l_sho['v'], r_sho['v']),
+        },
+    }
+
+
+def make_segment_vector(state, start_name, end_name):
+    joints = state['joints']
+    ja = state['mid_hip'] if start_name == '__mid_hip__' else state['mid_sho'] if start_name == '__mid_sho__' else joints[start_name]
+    jb = state['mid_hip'] if end_name == '__mid_hip__' else state['mid_sho'] if end_name == '__mid_sho__' else joints[end_name]
+    return Vec3(
+        jb['x'] - ja['x'],
+        -(jb['z'] - ja['z']),
+        -(jb['y'] - ja['y'])
+    )
+
+
 # ─── Panda3D App ─────────────────────────────────────────────────────────────
 
 try:
@@ -181,7 +252,7 @@ class AvatarStudio(ShowBase):
         self.setBackgroundColor(0.08, 0.07, 0.07, 1)
 
         self._frames = frames
-        self._fps = max(fps, 1.0)
+        self._fps = max(fps * 0.75, 1.0)
         self._frame_idx = 0
         self._last_frame_time = time.time()
         self._playing = True
@@ -254,7 +325,7 @@ class AvatarStudio(ShowBase):
             self._avatar = Actor(glb_path)
             self._avatar.reparentTo(self._avatar_root)
             self._avatar.setPos(0, 0, 0)
-            self._avatar.setH(180) 
+            self._avatar_root.setH(90)
             self._avatar.stop()
             
             if SHOW_DEBUG_SKELETON:
@@ -274,6 +345,11 @@ class AvatarStudio(ShowBase):
                 height = max_pt[2] - min_pt[2]
                 if height > 0:
                     self._avatar.setScale(1.7 / height)
+                    self._model_ground_offset = -min_pt[2] * (1.7 / height)
+                else:
+                    self._model_ground_offset = 0.0
+            else:
+                self._model_ground_offset = 0.0
 
             # Map bones using controlJoint on the Actor
             available_joints = {j.getName() for j in self._avatar.getJoints()}
@@ -384,7 +460,10 @@ class AvatarStudio(ShowBase):
             return
 
         frame = self._frames[frame_idx]
-        joints = frame['joints']
+        pose_state = frame_to_pose_state(frame)
+        joints = pose_state['joints']
+        mid_hip = pose_state['mid_hip']
+        mid_sho = pose_state['mid_sho']
         self._frame_idx = frame_idx
 
         # Update HUD
@@ -395,36 +474,12 @@ class AvatarStudio(ShowBase):
             f"Status: {status_text}"
         )
         
-        # Helper for calculating vectors between joints (User's suggested mapping)
-        def joint_vec(js, a_name, b_name):
-            ja = js[a_name] if isinstance(a_name, str) else a_name
-            jb = js[b_name] if isinstance(b_name, str) else b_name
-            return Vec3(
-                jb['x'] - ja['x'],
-                -(jb['z'] - ja['z']),
-                -(jb['y'] - ja['y'])
-            )
-
-        # Calculate midpoints for stable torso/root
-        l_hip, r_hip = joints['left_hip'], joints['right_hip']
-        l_sho, r_sho = joints['left_shoulder'], joints['right_shoulder']
-        
-        mid_hip = {
-            'x': (l_hip['x'] + r_hip['x']) / 2,
-            'y': (l_hip['y'] + r_hip['y']) / 2,
-            'z': (l_hip['z'] + r_hip['z']) / 2,
-        }
-        mid_sho = {
-            'x': (l_sho['x'] + r_sho['x']) / 2,
-            'y': (l_sho['y'] + r_sho['y']) / 2,
-            'z': (l_sho['z'] + r_sho['z']) / 2,
-        }
-
         # 1. Root Translation
+        root = pose_state['root']
         scale = 8.0
-        root_x = mid_hip['x'] * scale
-        root_y = mid_hip['z'] * scale
-        root_z = -mid_hip['y'] * scale
+        root_x = float(root.get('x', mid_hip['x'])) * scale
+        root_y = float(root.get('z', mid_hip['z'])) * scale
+        root_z = -float(root.get('y', mid_hip['y'])) * scale
         raw_root = Vec3(root_x, root_y, root_z)
         
         if not hasattr(self, "_root_origin"):
@@ -439,13 +494,12 @@ class AvatarStudio(ShowBase):
         self._last_root_pos = self._last_root_pos * 0.7 + target_pos * 0.3
         
         # Apply translation to the root node
-        self._avatar_root.setPos(self._last_root_pos[0], self._last_root_pos[1], 0)
+        self._avatar_root.setPos(
+            self._last_root_pos[0],
+            self._last_root_pos[1],
+            self._last_root_pos[2] + getattr(self, '_model_ground_offset', 0.0),
+        )
         
-        # Smooth Camera Tracking
-        cam_target = self._avatar_root.getPos() + Vec3(0, -5, 1.5)
-        self.camera.setPos(self.camera.getPos() * 0.9 + cam_target * 0.1)
-        self.camera.lookAt(self._avatar_root.getPos() + Vec3(0, 0, 1))
-
         # 2. Capture Rest Data (Search for first "Clean" frame)
         if not hasattr(self, "_human_rest_joints"):
             # Check if this frame is a good candidate for a T-Pose/Rest Pose
@@ -460,9 +514,22 @@ class AvatarStudio(ShowBase):
                 for b_name, (s_name, e_name) in BONE_MAP.items():
                     b_np = self._controlled_joints.get(b_name)
                     if not b_np: continue
+
+                    child_joint = None
+                    for child in b_np.getChildren():
+                        child_name = child.getName().lower()
+                        if 'joint' in child_name or 'mixamo' in child_name or 'skeleton' in child_name:
+                            child_joint = child
+                            break
+
+                    avatar_rest_vec = child_joint.getPos() if child_joint else Vec3(0, 0, 1)
+                    if avatar_rest_vec.length() < 1e-6:
+                        avatar_rest_vec = Vec3(0, 0, 1)
+                    avatar_rest_vec.normalize()
                     
                     self._bone_rest_data[b_name] = {
-                        'initial_world_quat': b_np.getQuat(self.render)
+                        'initial_local_quat': b_np.getQuat(),
+                        'avatar_rest_vec': avatar_rest_vec,
                     }
                 print(f"[studio] Rest Pose captured at frame {frame_idx} (Avg Confidence: {avg_v:.2f})")
             else:
@@ -481,49 +548,49 @@ class AvatarStudio(ShowBase):
             rest_info = self._bone_rest_data.get(bone_name)
             if not bone_np or not rest_info: continue
 
+            bone_spec = get_bone_spec(bone_name)
+
             # --- Human Pose Vector ---
             if 'torso' in bone_name or 'Spine' in bone_name:
-                h_rest_vec = joint_vec({'h': self._human_rest_mid_hip, 's': self._human_rest_mid_sho}, 'h', 's')
-                h_now_vec = joint_vec({'h': mid_hip, 's': mid_sho}, 'h', 's')
+                h_now_vec = make_segment_vector({'joints': {'__mid_hip__': mid_hip, '__mid_sho__': mid_sho}, 'mid_hip': mid_hip, 'mid_sho': mid_sho}, '__mid_hip__', '__mid_sho__')
                 conf = 1.0
             else:
-                h_rest_vec = joint_vec(self._human_rest_joints, start_name, end_name)
-                h_now_vec = joint_vec(joints, start_name, end_name)
+                h_now_vec = make_segment_vector(pose_state, start_name, end_name)
                 conf = min(joints[start_name]['v'], joints[end_name]['v'])
 
-            if h_rest_vec.length() < 1e-6 or h_now_vec.length() < 1e-6: continue
-            h_rest_vec.normalize()
+            avatar_rest_vec = rest_info.get('avatar_rest_vec')
+            if not avatar_rest_vec or h_now_vec.length() < 1e-6:
+                continue
+
             h_now_vec.normalize()
 
             # --- Target Orientation ---
-            # We want to rotate our 'avatar_rest_vec' to match the human 'h_now_vec'
-            # (Note: This is a simplified T-pose assumption where rest_vec matches h_rest_vec)
-            # For better accuracy, we calculate the delta rotation from h_rest to h_now
+            # Rotate the avatar's bind-pose bone direction to the current human segment direction.
             h_delta_quat = LQuaternionf()
-            h_axis = h_rest_vec.cross(h_now_vec)
-            h_angle = h_rest_vec.angleDeg(h_now_vec)
+            h_axis = avatar_rest_vec.cross(h_now_vec)
+            h_angle = avatar_rest_vec.angleDeg(h_now_vec)
             
-            limit = 120
-            if 'torso' in bone_name: limit = 40
-            elif 'leg' in bone_name: limit = 95
-            
-            damping = 0.85 if limit > 50 else 0.5
-            final_angle = min(max(h_angle * damping, -limit), limit)
+            limit = bone_spec['limit']
+            gain = bone_spec['gain']
+            final_angle = min(max(h_angle * gain, -limit), limit)
+
+            if bone_spec.get('invert'):
+                final_angle = -final_angle
 
             if h_axis.length() > 1e-6:
                 h_axis.normalize()
                 h_delta_quat.setFromAxisAngle(final_angle, h_axis)
 
-            # Apply delta to the INITIAL WORLD orientation
-            target_world_q = h_delta_quat * rest_info['initial_world_quat']
-            
-            # Smoothly transition in WORLD space
-            alpha = 0.4 if conf > 0.5 else 0.1
-            current_world_q = bone_np.getQuat(self.render)
-            smooth_world_q = current_world_q * (1.0 - alpha) + target_world_q * alpha
-            smooth_world_q.normalize()
-            
-            bone_np.setQuat(self.render, smooth_world_q)
+            # Apply delta to the initial local orientation.
+            target_local_q = h_delta_quat * rest_info['initial_local_quat']
+
+            # Smoothly transition in local joint space.
+            alpha = bone_spec['alpha'] if conf > 0.5 else bone_spec['alpha'] * 0.4
+            current_local_q = bone_np.getQuat()
+            smooth_local_q = current_local_q * (1.0 - alpha) + target_local_q * alpha
+            smooth_local_q.normalize()
+
+            bone_np.setQuat(smooth_local_q)
 
         self._avatar.update()
         if SHOW_DEBUG_SKELETON:

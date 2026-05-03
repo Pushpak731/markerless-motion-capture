@@ -29,7 +29,7 @@ except Exception:
     DEVICE = "cpu"
 
 # Options: 'LITE' (Fastest), 'FULL' (Balanced), 'HEAVY' (Most Accurate)
-POSE_MODEL_COMPLEXITY = 'HEAVY' 
+POSE_MODEL_COMPLEXITY = 'FULL' 
 
 # Multi-Person Settings (set to 1 for single-person use — each additional
 # slot multiplies MediaPipe's internal memory allocation for all 3 models)

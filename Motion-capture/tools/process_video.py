@@ -138,7 +138,7 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
     raw_nodes_csv_path = os.path.splitext(output_path)[0] + '_raw_3d_nodes.csv'
     raw_nodes_file = open(raw_nodes_csv_path, 'w', newline='')
     raw_nodes_writer = csv.writer(raw_nodes_file)
-    _raw_nodes_header = ['frame_idx', 'timestamp_ms']
+    _raw_nodes_header = ['frame_idx', 'timestamp_ms', 'root_x', 'root_y', 'root_z']
     MEDIAPIPE_JOINT_NAMES = [
         'nose', 'left_eye_inner', 'left_eye', 'left_eye_outer',
         'right_eye_inner', 'right_eye', 'right_eye_outer',
@@ -416,7 +416,14 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
         csv_writer.writerow(row)
 
         # --- Write raw 3D world node coordinates ---
-        raw_row = [frame_idx_local, timestamp_local]
+        # Calculate normalized root (center of hips) for translation
+        root_x, root_y, root_z = 0.0, 0.0, 0.0
+        if pose_lm and len(pose_lm) >= 25: # At least up to hips
+            root_x = (pose_lm[23]['x'] + pose_lm[24]['x']) / 2.0
+            root_y = (pose_lm[23]['y'] + pose_lm[24]['y']) / 2.0
+            root_z = (pose_lm[23]['z'] + pose_lm[24]['z']) / 2.0
+
+        raw_row = [frame_idx_local, timestamp_local, round(root_x, 6), round(root_y, 6), round(root_z, 6)]
         if world_lm and len(world_lm) == 33:
             for lm in world_lm:
                 raw_row += [round(lm['x'], 6), round(lm['y'], 6), round(lm['z'], 6), round(lm.get('v', 1.0), 4)]
