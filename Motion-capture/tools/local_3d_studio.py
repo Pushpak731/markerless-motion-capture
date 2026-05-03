@@ -390,25 +390,23 @@ class AvatarStudio(ShowBase):
                 continue
             vec.normalize()
 
-            # Compute rotation
+            # Compute rotation using lookAt for better stability across different rigs
             try:
-                # Most GLB/Mixamo models have bones pointing along their own +Z or +Y
-                # We'll try to align the bone to our tracked vector
-                q = LQuaternionf()
+                # We want the bone to point along 'vec'
+                # In Panda3D, lookAt(target, up) will rotate the node's +Y (forward) axis to target
+                # Some models use +Z, but let's try +Y (forward) first as it's standard for lookAt
+                target_pos = bone_np.getPos() + vec
+                bone_np.lookAt(target_pos, Vec3(0, 0, 1))
                 
-                # Standard rest vector for bones in Panda3D is Z-Up (0, 0, 1)
-                rest_vec = Vec3(0, 0, 1) 
+                # Calibration: Most GLB bones point along +Z, not +Y. 
+                # If he's mangled, we might need a 90-deg offset.
                 
-                # Align the bone to our tracked vector
-                q.setShortestArc(rest_vec, vec)
-                bone_np.setQuat(q)
-                
-                if frame_idx % 30 == 0 and bone_name == list(BONE_MAP.keys())[0]:
-                    print(f"[debug] Frame {frame_idx} | {bone_name} vec: {vec}")
+                if frame_idx % 30 == 0 and bone_name == 'Skeleton_arm_joint_R':
+                    print(f"[debug] Frame {frame_idx} | {bone_name} vec: {vec} | hpr: {bone_np.getHpr()}")
             except Exception as e:
                 pass
         
-        # Explicitly update the Actor to reflect manual joint changes
+        # Explicitly update the Actor
         if hasattr(self, '_avatar') and self._avatar:
             self._avatar.update()
 
