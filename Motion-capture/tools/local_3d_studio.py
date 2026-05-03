@@ -257,14 +257,16 @@ class AvatarStudio(ShowBase):
             available_joints = {j.getName() for j in self._avatar.getJoints()}
             for bone_name in BONE_MAP:
                 if bone_name in available_joints:
-                    # Switch to exposeJoint to get the actual joint node
-                    bone_np = self._avatar.exposeJoint(None, 'modelRoot', bone_name)
+                    # Use controlJoint with partName=None for direct skeletal override
+                    bone_np = self._avatar.controlJoint(None, 'modelRoot', bone_name)
                     if not bone_np or bone_np.isEmpty():
-                         bone_np = self._avatar.exposeJoint(None, 'model', bone_name)
+                         bone_np = self._avatar.controlJoint(None, 'model', bone_name)
+                    if not bone_np or bone_np.isEmpty():
+                         bone_np = self._avatar.controlJoint(None, None, bone_name)
                     
                     if bone_np and not bone_np.isEmpty():
                         self._controlled_joints[bone_name] = bone_np
-                        print(f"  [studio] Successfully exposed: {bone_name}")
+                        print(f"  [studio] Successfully controlling: {bone_name}")
                 else:
                     print(f"  [studio] Skipping missing joint: {bone_name}")
 
@@ -342,6 +344,10 @@ class AvatarStudio(ShowBase):
     def _apply_frame(self, frame_idx):
         if not self._frames or not self._controlled_joints:
             return
+
+        # Heartbeat to prove the loop is running
+        if frame_idx % 30 == 0:
+            print(f"[studio] Heartbeat: Applying frame {frame_idx}")
 
         frame = self._frames[frame_idx]
         joints = frame['joints']
