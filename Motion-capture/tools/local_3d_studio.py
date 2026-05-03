@@ -461,19 +461,8 @@ class AvatarStudio(ShowBase):
                     b_np = self._controlled_joints.get(b_name)
                     if not b_np: continue
                     
-                    child_j = None
-                    for c in b_np.getChildren():
-                        if 'joint' in c.getName().lower() or 'mixamo' in c.getName().lower():
-                            child_j = c
-                            break
-                    
-                    a_rest_vec = child_j.getPos() if child_j else Vec3(0, 0, 1)
-                    if a_rest_vec.length() < 1e-6: a_rest_vec = Vec3(0, 0, 1)
-                    a_rest_vec.normalize()
-
                     self._bone_rest_data[b_name] = {
-                        'initial_local_quat': b_np.getQuat(),
-                        'avatar_rest_vec': a_rest_vec
+                        'initial_world_quat': b_np.getQuat(self.render)
                     }
                 print(f"[studio] Rest Pose captured at frame {frame_idx} (Avg Confidence: {avg_v:.2f})")
             else:
@@ -525,15 +514,16 @@ class AvatarStudio(ShowBase):
                 h_axis.normalize()
                 h_delta_quat.setFromAxisAngle(final_angle, h_axis)
 
-            # Apply delta to the rest orientation
-            target_q = h_delta_quat * rest_info['initial_local_quat']
+            # Apply delta to the INITIAL WORLD orientation
+            target_world_q = h_delta_quat * rest_info['initial_world_quat']
             
-            # FAST response for limbs
-            alpha = 0.5 if conf > 0.5 else 0.1
-            current_q = bone_np.getQuat()
-            smooth_q = current_q * (1.0 - alpha) + target_q * alpha
-            smooth_q.normalize()
-            bone_np.setQuat(smooth_q)
+            # Smoothly transition in WORLD space
+            alpha = 0.4 if conf > 0.5 else 0.1
+            current_world_q = bone_np.getQuat(self.render)
+            smooth_world_q = current_world_q * (1.0 - alpha) + target_world_q * alpha
+            smooth_world_q.normalize()
+            
+            bone_np.setQuat(self.render, smooth_world_q)
 
         self._avatar.update()
         if SHOW_DEBUG_SKELETON:
