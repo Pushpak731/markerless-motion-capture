@@ -117,9 +117,9 @@ def load_csv_frames(csv_path):
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
         headers = reader.fieldnames
-        if not headers or 'timestamp_ms' not in headers:
-            print(f"[studio] ERROR: Invalid CSV format. Missing 'timestamp_ms'.")
-            print(f"[studio] Found headers: {headers[:5] if headers else 'None'}")
+        if not headers or 'timestamp_ms' not in headers or 'nose_x' not in headers:
+            print(f"[studio] ERROR: Invalid CSV format. This looks like a metrics file, not a raw 3D nodes file.")
+            print(f"[studio] Please select the file ending in '_raw_3d_nodes.csv'")
             return []
 
         for row in reader:
@@ -373,8 +373,8 @@ class AvatarStudio(ShowBase):
             # Direction vector from start to end joint (MediaPipe: y-down, z-toward camera)
             # Remap to Panda3D space (y-forward, z-up)
             dx = j_end['x'] - j_start['x']
-            dy = -(j_end['z'] - j_start['z'])   # Panda3D Z = -MediaPipe Z
-            dz = -(j_end['y'] - j_start['y'])   # Panda3D Y = -MediaPipe Y (up vs down)
+            dy = (j_end['z'] - j_start['z'])    # MP Z is already depth/forward
+            dz = -(j_end['y'] - j_start['y'])   # MP Y is down, so -Y is up
 
             vec = Vec3(dx, dy, dz)
             length = vec.length()
@@ -388,8 +388,8 @@ class AvatarStudio(ShowBase):
                 # We'll try to align the bone to our tracked vector
                 q = LQuaternionf()
                 
-                # Use Forward (Y+) as the rest vector
-                rest_vec = Vec3(0, 1, 0) 
+                # Standard rest vector for bones in Panda3D is Z-Up (0, 0, 1)
+                rest_vec = Vec3(0, 0, 1) 
                 
                 # Align the bone to our tracked vector
                 q.setShortestArc(rest_vec, vec)
