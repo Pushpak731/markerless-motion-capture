@@ -116,6 +116,12 @@ def load_csv_frames(csv_path):
     frames = []
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
+        headers = reader.fieldnames
+        if not headers or 'timestamp_ms' not in headers:
+            print(f"[studio] ERROR: Invalid CSV format. Missing 'timestamp_ms'.")
+            print(f"[studio] Found headers: {headers[:5] if headers else 'None'}")
+            return []
+
         for row in reader:
             joints = {}
             for jname in MEDIAPIPE_JOINT_NAMES:
