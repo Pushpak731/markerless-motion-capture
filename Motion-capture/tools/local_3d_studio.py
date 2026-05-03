@@ -383,18 +383,19 @@ class AvatarStudio(ShowBase):
                 continue
             vec.normalize()
 
-            # Compute quaternion to rotate the T-pose rest direction (0, 1, 0) → tracked direction
-            rest = Vec3(0, 1, 0)
-            q = LQuaternionf()
-            q.setFromAxisAngleRad(
-                Vec3.forward().cross(vec).length(),
-                Vec3.forward(),
-            )
+            # Compute rotation
             try:
+                # Most GLB/Mixamo models have bones pointing along their own +Z or +Y
+                # We'll try to align the bone to our tracked vector
                 q = LQuaternionf()
-                q.setShortestArc(Vec3(0, 0, -1), vec)
+                
+                # Use a more standard rest vector (Up for most bones in Panda3D space)
+                rest_vec = Vec3(0, 0, 1) 
+                
+                # For arms, they might point sideways in T-pose, but let's try Up first
+                q.setShortestArc(rest_vec, vec)
                 bone_np.setQuat(q)
-            except Exception:
+            except Exception as e:
                 pass
 
 
