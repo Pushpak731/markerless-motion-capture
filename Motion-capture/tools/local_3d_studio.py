@@ -342,6 +342,7 @@ class AvatarStudio(ShowBase):
         return task.cont
 
     def _apply_frame(self, frame_idx):
+        print(f"[studio] _apply_frame called. Controlled joints count: {len(self._controlled_joints)}")
         if not self._frames or not self._controlled_joints:
             return
 
@@ -404,7 +405,7 @@ class AvatarStudio(ShowBase):
                 bone_np.setQuat(self.render, delta_quat * rest_info['rest_quat'])
                 
                 # 4. Unified Telemetry (Watch ONE arm consistently)
-                if frame_idx % 30 == 0 and bone_name == 'Skeleton_arm_joint_R':
+                if bone_name == 'Skeleton_arm_joint_R':
                     cur_rot = bone_np.getQuat(self.render)
                     print(f"[debug] Frame {frame_idx} | {bone_name} | vec: {world_vec} | rot: {cur_rot}")
             except Exception as e:
