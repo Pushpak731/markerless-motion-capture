@@ -24,8 +24,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 # --- DEBUG OPTIONS ---
-DEBUG_ONLY_BONE = None # Set to e.g. 'Skeleton_arm_joint_L__4_' to isolate
-SHOW_DEBUG_SKELETON = True # Draw raw mocap points in 3D space
+DEBUG_ONLY_BONE = 'Skeleton_torso_joint_1' # Isolate torso first as recommended
+SHOW_DEBUG_SKELETON = True
 # --------------------
 
 # ─── Mixamo Bone Mapping ────────────────────────────────────────────────────
@@ -373,11 +373,15 @@ class AvatarStudio(ShowBase):
             f"Status: {status_text}"
         )
         
-        # Helper for calculating vectors between joints
+        # Helper for calculating vectors between joints (User's suggested mapping)
         def joint_vec(js, a_name, b_name):
             ja = js[a_name] if isinstance(a_name, str) else a_name
             jb = js[b_name] if isinstance(b_name, str) else b_name
-            return Vec3(jb['x'] - ja['x'], -(jb['z'] - ja['z']), -(jb['y'] - ja['y']))
+            return Vec3(
+                jb['x'] - ja['x'],
+                jb['z'] - ja['z'],
+                -(jb['y'] - ja['y'])
+            )
 
         # Calculate midpoints for stable torso/root
         l_hip, r_hip = joints['left_hip'], joints['right_hip']
@@ -394,18 +398,26 @@ class AvatarStudio(ShowBase):
             'z': (l_sho['z'] + r_sho['z']) / 2,
         }
 
-        # 1. Root Translation (with Centering)
-        scale = 5.0
-        raw_root = Vec3(mid_hip['x'] * scale, -mid_hip['z'] * scale, -mid_hip['y'] * scale)
+        # 1. Root Translation (with User's centering logic)
+        scale = 2.0
+        root_x = mid_hip['x'] * scale
+        root_y = mid_hip['z'] * scale # Forward is +Z in MP? Let's try user's suggestion.
+        root_z = -mid_hip['y'] * scale # Height
+        
+        raw_root = Vec3(root_x, root_y, root_z)
         
         if not hasattr(self, "_root_origin"):
             self._root_origin = raw_root
-            self._avatar.setZ(0)
+            print(f"[studio] Root Origin set: {self._root_origin}")
 
+        # Final position relative to frame 0
         target_pos = raw_root - self._root_origin
+        
+        # Smooth and Ground
         if not hasattr(self, "_last_root_pos"): self._last_root_pos = target_pos
         self._last_root_pos = self._last_root_pos * 0.8 + target_pos * 0.2
-        self._avatar.setPos(self._last_root_pos)
+        
+        self._avatar.setPos(self._last_root_pos[0], self._last_root_pos[1], 0) # Force Grounded
 
         # 2. Capture Human Rest Pose (Frame 0)
         if frame_idx == 0:
@@ -417,13 +429,15 @@ class AvatarStudio(ShowBase):
         # 3. Process Bones
         for bone_name, (start_name, end_name) in BONE_MAP.items():
             if DEBUG_ONLY_BONE and bone_name != DEBUG_ONLY_BONE:
+                # Reset non-debug bones to initial pose if needed
                 continue
                 
             bone_np = self._controlled_joints.get(bone_name)
             if not bone_np: continue
 
-            # Special Case: Torso uses midpoints
+            # --- VECTORS ---
             if 'torso' in bone_name or 'Spine' in bone_name:
+                # Midpoint-to-midpoint for torso stability
                 h_rest_vec = joint_vec({'h': self._human_rest_mid_hip, 's': self._human_rest_mid_sho}, 'h', 's')
                 h_now_vec = joint_vec({'h': mid_hip, 's': mid_sho}, 'h', 's')
                 conf = 1.0
@@ -437,14 +451,16 @@ class AvatarStudio(ShowBase):
             h_rest_vec.normalize()
             h_now_vec.normalize()
 
+            # --- QUATERNION ---
             axis = h_rest_vec.cross(h_now_vec)
             angle = h_rest_vec.angleDeg(h_now_vec)
             
+            # Restrictions
             limit = 120
-            if 'torso' in bone_name: limit = 25
-            elif 'leg' in bone_name: limit = 90
+            if 'torso' in bone_name: limit = 30
+            elif 'leg' in bone_name: limit = 95
             
-            damping = 0.8 if limit > 30 else 0.4
+            damping = 0.8 if limit > 40 else 0.4
             final_angle = min(max(angle * damping, -limit), limit)
 
             h_delta_quat = LQuaternionf()
@@ -452,13 +468,15 @@ class AvatarStudio(ShowBase):
                 axis.normalize()
                 h_delta_quat.setFromAxisAngle(final_angle, axis)
 
+            # Apply
             if bone_name not in self._bone_rest_data:
                 self._bone_rest_data[bone_name] = {'initial_local_quat': bone_np.getQuat()}
             
             rest_info = self._bone_rest_data[bone_name]
             target_q = h_delta_quat * rest_info['initial_local_quat']
             
-            alpha = 0.15 if conf > 0.4 else 0.05
+            # Slerp-like smoothing
+            alpha = 0.2 if conf > 0.4 else 0.05
             current_q = bone_np.getQuat()
             smooth_q = current_q * (1.0 - alpha) + target_q * alpha
             smooth_q.normalize()
