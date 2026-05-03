@@ -347,7 +347,9 @@ class AvatarStudio(ShowBase):
 
         # Heartbeat to prove the loop is running
         if frame_idx % 30 == 0:
-            print(f"[studio] Heartbeat: Applying frame {frame_idx}")
+            bone_name = list(self._controlled_joints.keys())[0]
+            bone_np = self._controlled_joints[bone_name]
+            print(f"[studio] Heartbeat: Frame {frame_idx} | {bone_name} pos: {bone_np.getPos()} | rot: {bone_np.getQuat()}")
 
         frame = self._frames[frame_idx]
         joints = frame['joints']
