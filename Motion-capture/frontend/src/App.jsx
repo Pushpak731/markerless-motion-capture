@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Coffee, Settings, Activity, Camera, Database, Download, FileText, Box, Upload, Film } from 'lucide-react'
 
+import AvatarStudio from './components/AvatarStudio'
+
 const API_BASE = 'http://localhost:8000'
 
 function App() {
@@ -13,8 +15,10 @@ function App() {
   const [isVerifying, setIsVerifying] = useState(false)
   const [verifyResult, setVerifyResult] = useState(null)
   const [verifyError, setVerifyError] = useState('')
+  const [isStudioOpen, setIsStudioOpen] = useState(false)
 
-  // Metrics Poller (Fast)
+  // ... (rest of the component state/effects)
+
   useEffect(() => {
     if (!isConnected) return
     const fetchMetrics = async () => {
@@ -278,13 +282,11 @@ function App() {
               <div className="pt-4 border-t border-mocha/20 space-y-3">
                 <h3 className="text-sm font-medium text-latte">AI Analysis</h3>
                 <button
-                  onClick={startViz}
-                  className="w-full bg-espresso border border-cyan-500/30 hover:bg-cyan-900/10 text-cyan-200 font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95"
+                  onClick={() => setIsStudioOpen(true)}
+                  className="w-full bg-espresso border border-cyan-500/30 hover:bg-cyan-900/10 text-cyan-200 font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
                 >
-                  <div className="flex items-center justify-center gap-2">
-                    <Box className="w-5 h-5" />
-                    Visualize 3D
-                  </div>
+                  <Box className="w-5 h-5" />
+                  Open Avatar Studio
                 </button>
 
                 <button
@@ -369,6 +371,11 @@ function App() {
           </div>
         </div>
       </main>
+
+      {/* 3D Avatar Studio Modal */}
+      {isStudioOpen && (
+        <AvatarStudio onClose={() => setIsStudioOpen(false)} />
+      )}
     </div>
   )
 }

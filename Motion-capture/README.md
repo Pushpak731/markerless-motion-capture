@@ -88,6 +88,22 @@ Key outputs:
 - `quality_report_<timestamp>.json`
 - `quality_report_strict_<timestamp>.json`
 
+### Recent Verification Results
+
+Our latest automated test runs produced the following offline verification artifacts. These validate our zero-latency 2D visualization architecture and strict 3D physical constraints.
+
+- **Video 1 (May 03)**
+  - Original: `WhatsApp Video 2026-05-03 at 1.02.28 PM.mp4`
+  - Annotated Output: [annotated_20260503_144652.mp4](data/offline_validation_runs/annotated_20260503_144652.mp4)
+  - Metrics Data: [annotated_20260503_144652_metrics.csv](data/offline_validation_runs/annotated_20260503_144652_metrics.csv)
+  - Generated Charts: [Variance](analysis_results/annotated_20260503_144652_metrics_variance.png), [Jitter](analysis_results/annotated_20260503_144652_metrics_jitter.png), [Gantt](analysis_results/annotated_20260503_144652_metrics_gantt.png)
+
+- **Video 2 (May 01)**
+  - Original: `WhatsApp Video 2026-05-01 at 1.00.41 PM.mp4`
+  - Annotated Output: [annotated_20260503_144734.mp4](data/offline_validation_runs/annotated_20260503_144734.mp4)
+  - Metrics Data: [annotated_20260503_144734_metrics.csv](data/offline_validation_runs/annotated_20260503_144734_metrics.csv)
+  - Generated Charts: [Variance](analysis_results/annotated_20260503_144734_metrics_variance.png), [Jitter](analysis_results/annotated_20260503_144734_metrics_jitter.png), [Gantt](analysis_results/annotated_20260503_144734_metrics_gantt.png)
+
 ### Frontend upload flow (offline verification)
 
 You can now upload a video from the React dashboard and get back an annotated output video.
