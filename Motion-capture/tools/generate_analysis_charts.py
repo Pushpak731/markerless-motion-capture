@@ -390,29 +390,33 @@ def chart_summary_dashboard(df, base, out_dir):
 
 # ─── Main ──────────────────────────────────────────────────────────────────
 
-def generate_all(csv_path, out_dir='analysis_results'):
-    print(f"\nProcessing: {os.path.basename(csv_path)}")
+def generate_all(csv_path, prefix_name, out_dir='analysis_results'):
+    print(f"\nProcessing: {os.path.basename(csv_path)} -> as {prefix_name}")
     df = pd.read_csv(csv_path)
     if df.empty:
         print("  Empty CSV, skipping."); return
 
-    base = os.path.splitext(os.path.basename(csv_path))[0]
+    # Use prefix_name for the output files instead of the raw timestamp base
     os.makedirs(out_dir, exist_ok=True)
 
-    chart_variance(df, base, out_dir)
-    chart_jitter(df, base, out_dir)
-    chart_gantt(df, base, out_dir)
-    chart_bone_lengths(df, base, out_dir)
-    chart_symmetry(df, base, out_dir)
-    chart_visibility(df, base, out_dir)
-    chart_processing_fps(df, base, out_dir)
-    chart_summary_dashboard(df, base, out_dir)
+    chart_variance(df, prefix_name, out_dir)
+    chart_jitter(df, prefix_name, out_dir)
+    chart_gantt(df, prefix_name, out_dir)
+    chart_bone_lengths(df, prefix_name, out_dir)
+    chart_symmetry(df, prefix_name, out_dir)
+    chart_visibility(df, prefix_name, out_dir)
+    chart_processing_fps(df, prefix_name, out_dir)
+    chart_summary_dashboard(df, prefix_name, out_dir)
 
 
 if __name__ == '__main__':
     csvs = sorted(glob.glob('data/offline_validation_runs/*_metrics.csv'))
     if not csvs:
         print("No CSV metrics found in data/offline_validation_runs/")
-    for csv in csvs:
-        generate_all(csv)
+        
+    for i, csv in enumerate(csvs):
+        # Name them fig1, fig2, etc. based on chronological order
+        # Assuming the oldest file is video 1 (May 01) and newest is video 2 (May 03)
+        prefix_name = f"fig{i+1}" 
+        generate_all(csv, prefix_name)
     print('\nAll charts saved to analysis_results/')

@@ -65,6 +65,13 @@ echo "[run] Processing video"
   --summary-json "$SUMMARY" \
   --max-frames "$MAX_FRAMES"
 
+echo "[post-process] Re-encoding MP4 for WhatsApp compatibility (adding faststart atom)"
+if command -v ffmpeg &> /dev/null; then
+    ffmpeg -y -i "$ANNOTATED" -c copy -movflags +faststart "${ANNOTATED}_tmp.mp4" 2>/dev/null && mv "${ANNOTATED}_tmp.mp4" "$ANNOTATED"
+else
+    echo "  -> Warning: ffmpeg not found, skipping faststart encoding."
+fi
+
 echo "[gate] Running 10-check quality gate (balanced)"
 set +e
 "$PY" tools/offline_quality_gate.py --summary "$SUMMARY" --report "$REPORT" --profile balanced
