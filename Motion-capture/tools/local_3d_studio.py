@@ -260,9 +260,9 @@ class AvatarStudio(ShowBase):
                     # Use controlJoint with partName=None for direct skeletal override
                     bone_np = self._avatar.controlJoint(None, 'modelRoot', bone_name)
                     if not bone_np or bone_np.isEmpty():
-                         bone_np = self._avatar.controlJoint(None, 'model', bone_name)
+                        bone_np = self._avatar.controlJoint(None, 'model', bone_name)
                     if not bone_np or bone_np.isEmpty():
-                         bone_np = self._avatar.controlJoint(None, None, bone_name)
+                        bone_np = self._avatar.controlJoint(None, None, bone_name)
                     
                     if bone_np and not bone_np.isEmpty():
                         self._controlled_joints[bone_name] = bone_np
