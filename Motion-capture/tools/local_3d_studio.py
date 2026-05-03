@@ -398,8 +398,8 @@ class AvatarStudio(ShowBase):
             'z': (l_sho['z'] + r_sho['z']) / 2,
         }
 
-        # 1. Root Translation (with User's centering logic)
-        scale = 2.0
+        # 1. Root Translation (Increased scale for noticeable movement)
+        scale = 8.0 # 8 meters room scale
         root_x = mid_hip['x'] * scale
         root_y = mid_hip['z'] * scale
         root_z = -mid_hip['y'] * scale
@@ -410,9 +410,14 @@ class AvatarStudio(ShowBase):
             self._root_origin = raw_root
             print(f"[studio] Root Origin set: {self._root_origin}")
 
+        # Final position relative to frame 0
         target_pos = raw_root - self._root_origin
+        
+        # Smooth and Ground
         if not hasattr(self, "_last_root_pos"): self._last_root_pos = target_pos
-        self._last_root_pos = self._last_root_pos * 0.8 + target_pos * 0.2
+        self._last_root_pos = self._last_root_pos * 0.7 + target_pos * 0.3
+        
+        # Force grounded at Z=0
         self._avatar.setPos(self._last_root_pos[0], self._last_root_pos[1], 0)
 
         # 2. Capture Rest Data (Frame 0)
@@ -427,22 +432,13 @@ class AvatarStudio(ShowBase):
                 if not bone_np: continue
                 
                 # Capture the ACTUAL rest vector of the bone in the avatar's local space
-                # We find the child joint (or a proxy) to see which way the bone points
                 child_joint = None
                 for child in bone_np.getChildren():
                     if 'joint' in child.getName().lower() or 'mixamo' in child.getName().lower():
                         child_joint = child
                         break
                 
-                if child_joint:
-                    # Vector from parent to child in local space
-                    avatar_rest_vec = child_joint.getPos() 
-                else:
-                    # Fallback to standard Up/Out based on bone name
-                    if 'arm' in bone_name.lower(): avatar_rest_vec = Vec3(1, 0, 0)
-                    elif 'leg' in bone_name.lower(): avatar_rest_vec = Vec3(0, 0, -1)
-                    else: avatar_rest_vec = Vec3(0, 0, 1)
-                
+                avatar_rest_vec = child_joint.getPos() if child_joint else Vec3(0, 0, 1)
                 if avatar_rest_vec.length() < 1e-6: avatar_rest_vec = Vec3(0, 0, 1)
                 avatar_rest_vec.normalize()
 
@@ -450,6 +446,10 @@ class AvatarStudio(ShowBase):
                     'initial_local_quat': bone_np.getQuat(),
                     'avatar_rest_vec': avatar_rest_vec
                 }
+
+        # Debug Print playback
+        if frame_idx % 30 == 0:
+            print(f"[studio] Playback at frame {frame_idx}/{len(self._frames)}")
 
         # 3. Process Bones
         for bone_name, (start_name, end_name) in BONE_MAP.items():
@@ -483,10 +483,10 @@ class AvatarStudio(ShowBase):
             h_angle = h_rest_vec.angleDeg(h_now_vec)
             
             limit = 120
-            if 'torso' in bone_name: limit = 30
+            if 'torso' in bone_name: limit = 40
             elif 'leg' in bone_name: limit = 95
             
-            damping = 0.8 if limit > 40 else 0.4
+            damping = 0.85 if limit > 50 else 0.5
             final_angle = min(max(h_angle * damping, -limit), limit)
 
             if h_axis.length() > 1e-6:
@@ -497,7 +497,7 @@ class AvatarStudio(ShowBase):
             target_q = h_delta_quat * rest_info['initial_local_quat']
             
             # Slerp-like smoothing
-            alpha = 0.2 if conf > 0.4 else 0.05
+            alpha = 0.3 if conf > 0.4 else 0.1
             current_q = bone_np.getQuat()
             smooth_q = current_q * (1.0 - alpha) + target_q * alpha
             smooth_q.normalize()
@@ -512,7 +512,7 @@ class AvatarStudio(ShowBase):
         self._debug_np.node().removeAllChildren()
         ls = LineSegs()
         ls.setThickness(2.0)
-        s = 2.0
+        s = 3.0 # Larger debug skeleton
         def p(j): return Vec3(j['x']*s, -j['z']*s, -j['y']*s)
         ls.setColor(1, 1, 0, 1)
         ls.moveTo(p(mid_hip))
