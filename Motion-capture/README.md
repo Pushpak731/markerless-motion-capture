@@ -9,6 +9,9 @@ This folder contains the live app, launchers, and the metric pipeline that now s
 - single-camera capture from a webcam, phone/IP stream, or local video file
 - multi-camera server/master capture for synchronized 3D reconstruction
 - offline annotation export for verification videos
+- zero-latency 2D visual tracking decoupled from strictly stabilized 3D physics metrics
+- HEAVY pose model complexity enabled by default for maximum accuracy
+- per-landmark correction metadata exported in offline validation CSVs
 - bone-length stabilization with stateful tracking and world-space preference
 - live Tkinter dashboard plus web frontend support
 

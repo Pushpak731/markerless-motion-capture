@@ -29,7 +29,7 @@ except Exception:
     DEVICE = "cpu"
 
 # Options: 'LITE' (Fastest), 'FULL' (Balanced), 'HEAVY' (Most Accurate)
-POSE_MODEL_COMPLEXITY = 'FULL' 
+POSE_MODEL_COMPLEXITY = 'HEAVY' 
 
 # Multi-Person Settings (set to 1 for single-person use — each additional
 # slot multiplies MediaPipe's internal memory allocation for all 3 models)
@@ -68,7 +68,9 @@ POSTGRES_CONNECTION = {  # For PostgreSQL (set DB_TYPE='postgres' to use)
 
 # --- Image Preprocessing ---
 # Frame Resizing
-MAX_FRAME_WIDTH = 640   # Resize frames wider than this before inference; 640 is enough for MediaPipe and saves ~4x unified-memory per frame
+MAX_FRAME_WIDTH = 1280   # Higher resolution for better joint localization
+ABLATION_GAMMA = 1.0     # Disable brightening to avoid washing out features
+ABLATION_CLAHE_CLIP = 0.0 # Disable contrast enhancement for 'honest' pixels
 
 # Gamma Correction
 GAMMA_DEFAULT = 1.0     # Default gamma value (1.0 = disabled)
@@ -92,7 +94,7 @@ VISIBILITY_MIN_METRIC = 0.5     # Minimum visibility for metric calculations
 
 # 1 Euro Filter Parameters (Optimized for 30 FPS)
 FILTER_MIN_CUTOFF = 1.0     # Minimum cutoff frequency (Hz) - smooth slow motion
-FILTER_BETA = 0.005         # Speed coefficient - responsiveness during fast motion
+FILTER_BETA = 0.05          # Speed coefficient - responsiveness during fast motion
 FILTER_D_CUTOFF = 1.0       # Derivative cutoff frequency (Hz)
 
 # Physics Constraints
@@ -114,7 +116,8 @@ SMOOTHING_ALPHA_FACE = 0.3      # Stronger smoothing for facial metrics
 
 # Bone Length Stabilization
 BONE_LENGTH_CALIBRATION_FRAMES = 30  # Number of frames used to learn fixed reference lengths
-BONE_LENGTH_EMA_ALPHA = 0.35         # EMA alpha for joint position smoothing before length calc
+MIN_VALID_BONES_PER_CALIBRATION_FRAME = 5 # Minimum valid bones required to count frame for calibration
+BONE_LENGTH_EMA_ALPHA = 1.0         # Disable redundant EMA (rely on PoseCorrector)
 BONE_LENGTH_MAX_DEVIATION = 0.20     # Soft clamp: allow ±20% deviation from reference length
 BONE_LENGTH_MIN_CONFIDENCE = 0.50    # Ignore/interpolate landmarks below this visibility
 
@@ -122,13 +125,13 @@ BONE_LENGTH_MIN_CONFIDENCE = 0.50    # Ignore/interpolate landmarks below this v
 IPD_DEFAULT = 0.065             # Default interpupillary distance (meters) if detection fails
 
 # --- Detector Toggles (Default States) ---
-ENABLE_FACE_DETECTION = True
-ENABLE_HAND_DETECTION = True
+ENABLE_FACE_DETECTION = False
+ENABLE_HAND_DETECTION = False
 ENABLE_FACE_EXPOSURE = False    # Face-guided exposure disabled by default
 
 # --- ROI-Based Pose Cropping ---
 # Crop to person bounding box for higher effective resolution
-ENABLE_ROI_CROPPING = True          # Enable person-centered ROI cropping
+ENABLE_ROI_CROPPING = False          # Enable person-centered ROI cropping
 ROI_EXPANSION_FACTOR = 0.25         # Expand bbox by 25% (0.2-0.3 recommended)
 ROI_MIN_SIZE = 200                  # Minimum ROI size (pixels)
 ROI_TARGET_SIZE = 640               # Resize ROI to this size for inference

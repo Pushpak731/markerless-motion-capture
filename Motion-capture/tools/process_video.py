@@ -159,6 +159,7 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
         'usable_pose_coverage',
         'source_name',
         'stable_frame_used',
+        'correction_metadata',
     ]
     for bone_name in CSV_BONE_FIELDS:
         csv_header.extend([
@@ -356,6 +357,7 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
             usable_pose_coverage,
             bone_result.get('source_name', '') if bone_result else '',
             bone_result.get('stable_frame_used', False) if bone_result else False,
+            json.dumps((base_results.get('pose_correction_metadata', {}).get('normalized') or [{}])[0]) if base_results else '{}',
         ]
         variance_map = bone_result.get('variance_lengths', {}) if bone_result else {}
         stddev_map = bone_result.get('stddev_lengths', {}) if bone_result else {}

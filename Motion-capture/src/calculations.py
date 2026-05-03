@@ -207,8 +207,7 @@ class BoneLengthTracker:
             reference_value = reference_lengths.get(bone_name)
             if reference_value is None or reference_value <= 1e-9:
                 reference_value = raw_value
-                if update_reference and bone_name not in self._reference_lengths:
-                    self._reference_lengths[bone_name] = raw_value
+                # Removed immediate self-seeding here to ensure we wait for calibration buffer
 
             normalized_lengths[f'Normalized_{bone_name}'] = round(raw_value / max(reference_value, 1e-9), 4)
 

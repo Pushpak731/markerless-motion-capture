@@ -14,7 +14,7 @@ INPUT_VIDEO="$1"
 if [[ $# -gt 1 ]]; then
   echo "[note] Frame caps are ignored here; the full video will always be processed"
 fi
-MAX_FRAMES=0
+MAX_FRAMES="${2:-0}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
