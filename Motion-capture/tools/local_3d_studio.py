@@ -59,12 +59,12 @@ BONE_MAP_MIXAMO = {
 BONE_MAP_CESIUM = {
     'Skeleton_arm_joint_L__4_': ('left_shoulder',   'left_elbow'),
     'Skeleton_arm_joint_L__3_': ('left_elbow',      'left_wrist'),
-    'Skeleton_arm_joint_R__4_': ('right_shoulder',  'right_elbow'),
-    'Skeleton_arm_joint_R__3_': ('right_elbow',     'right_wrist'),
+    'Skeleton_arm_joint_R':      ('right_shoulder',  'right_elbow'),
+    'Skeleton_arm_joint_R__2_':  ('right_elbow',     'right_wrist'),
     'Skeleton_leg_joint_L__4_': ('left_hip',        'left_knee'),
     'Skeleton_leg_joint_L__3_': ('left_knee',       'left_ankle'),
-    'Skeleton_leg_joint_R__4_': ('right_hip',       'right_knee'),
-    'Skeleton_leg_joint_R__3_': ('right_knee',      'right_ankle'),
+    'Skeleton_leg_joint_R':      ('right_hip',       'right_knee'),
+    'Skeleton_leg_joint_R__2_':  ('right_knee',      'right_ankle'),
     'Skeleton_torso_joint_1':   ('left_hip',        'left_shoulder'),
 }
 
@@ -231,13 +231,11 @@ class AvatarStudio(ShowBase):
             self._avatar.reparentTo(self.render)
             self._avatar.setPos(0, 0, 0)
 
-            # Debug: Print joint names to help with mapping
-            print("[studio] Joint list found in model:")
+            # Debug: Print ALL joint names
+            print("[studio] Full joint list found in model:")
             joints = self._avatar.getJoints()
-            for j in joints[:10]: # Print first 10
+            for j in joints:
                 print(f"  - {j.getName()}")
-            if len(joints) > 10:
-                print(f"  ... and {len(joints)-10} more")
 
             # Scale to ~1.7m height
             bounds = self._avatar.getTightBounds()
@@ -249,17 +247,16 @@ class AvatarStudio(ShowBase):
 
             # Map bones using controlJoint on the Actor
             for bone_name in BONE_MAP:
-                # Part name is usually 'modelRoot' for GLB loads
+                # Some models need 'modelRoot', others None
                 bone_np = self._avatar.controlJoint(None, 'modelRoot', bone_name)
-                if bone_np:
+                if not bone_np:
+                     bone_np = self._avatar.controlJoint(None, 'model', bone_name)
+                
+                if bone_np and not bone_np.isEmpty():
                     self._controlled_joints[bone_name] = bone_np
-                    print(f"  [studio] Controlled joint: {bone_name}")
+                    print(f"  [studio] Successfully controlling: {bone_name}")
                 else:
-                    # Try finding without part name
-                    bone_np = self._avatar.controlJoint(None, 'modelRoot', bone_name)
-                    if not bone_np:
-                        # Some models might need case-insensitive search or have prefixes
-                        pass
+                    print(f"  [studio] Skipping missing joint: {bone_name}")
 
             print(f"[studio] Model loaded: {os.path.basename(glb_path)}")
             print(f"[studio] Bones successfully controlled: {len(self._controlled_joints)} / {len(BONE_MAP)}")
