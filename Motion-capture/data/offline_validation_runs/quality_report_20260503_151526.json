@@ -1,5 +1,5 @@
 {
-  "profile": "strict",
+  "profile": "balanced",
   "overall_pass": false,
   "passed_count": 10,
   "total_checks": 11,
@@ -69,55 +69,55 @@
     {
       "name": "pose_coverage",
       "value": 0.9181,
-      "rule": ">= 0.8",
+      "rule": ">= 0.7",
       "passed": true
     },
     {
       "name": "mean_consistency_score",
       "value": 0.7145,
-      "rule": ">= 0.2",
+      "rule": ">= 0.1",
       "passed": true
     },
     {
       "name": "p50_consistency_score",
       "value": 0.7229,
-      "rule": ">= 0.2",
+      "rule": ">= 0.1",
       "passed": true
     },
     {
       "name": "stddev_consistency_score",
       "value": 0.1375,
-      "rule": "<= 0.22",
+      "rule": "<= 0.3",
       "passed": true
     },
     {
       "name": "mean_abs_normalized_deviation",
       "value": 0.0614,
-      "rule": "<= 0.3",
+      "rule": "<= 0.45",
       "passed": true
     },
     {
       "name": "p90_abs_normalized_deviation",
       "value": 0.1767,
-      "rule": "<= 0.6",
+      "rule": "<= 0.85",
       "passed": true
     },
     {
       "name": "bone_variance_mean",
       "value": 0.000216,
-      "rule": "<= 0.03",
+      "rule": "<= 0.05",
       "passed": true
     },
     {
       "name": "bone_stddev_mean",
       "value": 0.013106,
-      "rule": "<= 0.18",
+      "rule": "<= 0.25",
       "passed": true
     },
     {
       "name": "processing_fps",
-      "value": 8.862,
-      "rule": ">= 10.0",
+      "value": 5.601,
+      "rule": ">= 8.0",
       "passed": false
     }
   ]

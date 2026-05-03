@@ -1,17 +1,17 @@
 {
   "profile": "strict",
   "overall_pass": false,
-  "passed_count": 9,
+  "passed_count": 10,
   "total_checks": 11,
-  "detected_pose_coverage": 0.908,
-  "usable_pose_coverage": 0.296,
-  "longest_missing_pose_streak": 20,
-  "longest_unusable_pose_streak": 74,
-  "interpolated_frame_count": 8,
-  "tracking_loss_frame_count": 24,
-  "low_confidence_frame_count": 22,
-  "partial_pose_frame_count": 125,
-  "unstable_frame_count": 58,
+  "detected_pose_coverage": 1.0,
+  "usable_pose_coverage": 0.9181,
+  "longest_missing_pose_streak": 0,
+  "longest_unusable_pose_streak": 3,
+  "interpolated_frame_count": 0,
+  "tracking_loss_frame_count": 0,
+  "low_confidence_frame_count": 0,
+  "partial_pose_frame_count": 0,
+  "unstable_frame_count": 12,
   "joint_dropout_rate_per_joint": {
     "0": 0.0,
     "1": 0.0,
@@ -26,43 +26,37 @@
     "10": 0.0,
     "11": 0.0,
     "12": 0.0,
-    "13": 0.296,
-    "14": 0.8362,
-    "15": 0.3046,
-    "16": 0.8391,
-    "17": 0.3075,
-    "18": 0.842,
-    "19": 0.3132,
-    "20": 0.842,
-    "21": 0.3707,
-    "22": 0.8592,
+    "13": 0.0,
+    "14": 0.21,
+    "15": 0.0,
+    "16": 0.0,
+    "17": 0.0,
+    "18": 0.0,
+    "19": 0.0,
+    "20": 0.0,
+    "21": 0.0,
+    "22": 0.0,
     "23": 0.0,
     "24": 0.0,
-    "25": 0.1868,
-    "26": 0.6925,
-    "27": 0.1034,
-    "28": 0.4167,
-    "29": 0.158,
-    "30": 0.2759,
-    "31": 0.1006,
-    "32": 0.3994
+    "25": 0.0,
+    "26": 0.0498,
+    "27": 0.0,
+    "28": 0.0534,
+    "29": 0.1103,
+    "30": 0.3381,
+    "31": 0.0463,
+    "32": 0.032
   },
   "input_quality_warnings": [
-    "usable pose coverage is low",
-    "missing runs exceed interpolation window",
-    "several consecutive frames are unstable or low confidence",
     "some joints drop out frequently"
   ],
   "recommendations": [
-    "Increase capture quality or reduce motion blur so short gaps stay within interpolation range.",
-    "Keep the full body in frame and improve lighting to raise usable pose coverage.",
-    "Pay attention to the joints with the highest dropout rate; they are the weakest parts of the track.",
-    "Slow down rapid movement or move the camera farther back to reduce unstable detections."
+    "Pay attention to the joints with the highest dropout rate; they are the weakest parts of the track."
   ],
   "checks": [
     {
       "name": "frames_seen_nonzero",
-      "value": 348.0,
+      "value": 281.0,
       "rule": ">= 1.0",
       "passed": true
     },
@@ -74,55 +68,55 @@
     },
     {
       "name": "pose_coverage",
-      "value": 0.296,
+      "value": 0.9181,
       "rule": ">= 0.8",
-      "passed": false
+      "passed": true
     },
     {
       "name": "mean_consistency_score",
-      "value": 0.7294,
+      "value": 0.7145,
       "rule": ">= 0.2",
       "passed": true
     },
     {
       "name": "p50_consistency_score",
-      "value": 0.66,
+      "value": 0.7229,
       "rule": ">= 0.2",
       "passed": true
     },
     {
       "name": "stddev_consistency_score",
-      "value": 0.1818,
+      "value": 0.1375,
       "rule": "<= 0.22",
       "passed": true
     },
     {
       "name": "mean_abs_normalized_deviation",
-      "value": 0.0867,
+      "value": 0.0614,
       "rule": "<= 0.3",
       "passed": true
     },
     {
       "name": "p90_abs_normalized_deviation",
-      "value": 0.3517,
+      "value": 0.1767,
       "rule": "<= 0.6",
       "passed": true
     },
     {
       "name": "bone_variance_mean",
-      "value": 0.000366,
+      "value": 0.000216,
       "rule": "<= 0.03",
       "passed": true
     },
     {
       "name": "bone_stddev_mean",
-      "value": 0.017261,
+      "value": 0.013106,
       "rule": "<= 0.18",
       "passed": true
     },
     {
       "name": "processing_fps",
-      "value": 9.583,
+      "value": 5.601,
       "rule": ">= 10.0",
       "passed": false
     }
