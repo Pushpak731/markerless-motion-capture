@@ -361,7 +361,27 @@ class AvatarStudio(ShowBase):
         # 1. Initialize Rest Data (Capture Human rest pose on Frame 0)
         if not hasattr(self, '_human_rest_joints'):
             self._human_rest_joints = self._frames[0]['joints']
-            self._bone_rest_data = {} # Clear old world-space rest data
+            self._bone_rest_data = {} 
+            # Capture human root start (average of hips)
+            h_l_hip = self._human_rest_joints['left_hip']
+            h_r_hip = self._human_rest_joints['right_hip']
+            self._human_root_start = Vec3(
+                (h_l_hip['x'] + h_r_hip['x']) / 2.0,
+                (h_l_hip['z'] + h_r_hip['z']) / 2.0,
+                -((h_l_hip['y'] + h_r_hip['y']) / 2.0)
+            )
+
+        # --- Root Translation (Forward/Backward Motion) ---
+        h_l_hip_now = joints['left_hip']
+        h_r_hip_now = joints['right_hip']
+        h_root_now = Vec3(
+            (h_l_hip_now['x'] + h_r_hip_now['x']) / 2.0,
+            (h_l_hip_now['z'] + h_r_hip_now['z']) / 2.0,
+            -((h_l_hip_now['y'] + h_r_hip_now['y']) / 2.0)
+        )
+        # Calculate displacement and scale it (Mediapipe units are roughly meters but noisy)
+        root_delta = (h_root_now - self._human_root_start) * 2.0 
+        self._avatar.setPos(root_delta[0], root_delta[1], root_delta[2])
 
         # 2. Process joints in a logical hierarchy (Local/Parent Space)
         for bone_name, (start_joint_name, end_joint_name) in BONE_MAP.items():
@@ -379,7 +399,6 @@ class AvatarStudio(ShowBase):
                 continue
 
             # --- Human Motion Delta ---
-            # Map MediaPipe World (X-right, Y-down, Z-depth) to Panda3D Scene (X-right, Y-forward, Z-up)
             def mp_to_p3d_vec(s, e):
                 return Vec3(e['x'] - s['x'], e['z'] - s['z'], -(e['y'] - s['y']))
 
@@ -392,7 +411,6 @@ class AvatarStudio(ShowBase):
             h_rest_vec.normalize()
             h_now_vec.normalize()
 
-            # The Human's rotation from their start pose to now
             h_delta_quat = LQuaternionf()
             axis = h_rest_vec.cross(h_now_vec)
             angle = h_rest_vec.angleDeg(h_now_vec)
@@ -400,29 +418,26 @@ class AvatarStudio(ShowBase):
                 axis.normalize()
                 h_delta_quat.setFromAxisAngle(angle, axis)
             elif h_rest_vec.dot(h_now_vec) < -0.99:
-                # 180-degree turn case
                 h_delta_quat.setFromAxisAngle(180, Vec3(0, 0, 1))
 
             # --- Avatar Side ---
             if bone_name not in self._bone_rest_data:
-                # Capture the Model's ORIGINAL local orientation (relative to parent)
                 self._bone_rest_data[bone_name] = {
                     'initial_local_quat': bone_np.getQuat() 
                 }
 
-            # --- Apply with Confidence Fallback ---
+            # --- Apply with Confidence & Smoothing ---
             confidence = min(h_now_start['v'], h_now_end['v'])
             rest_info = self._bone_rest_data[bone_name]
             
             if confidence > 0.3:
-                # Apply the human's delta rotation to the bone's initial local orientation
-                # This moves the bone relative to its own parent!
-                bone_np.setQuat(h_delta_quat * rest_info['initial_local_quat'])
-                
-                if bone_name == 'Skeleton_arm_joint_R' and frame_idx % 30 == 0:
-                    print(f"[debug] Frame {frame_idx} | {bone_name} Retargeted. Conf: {confidence:.2f}")
+                target_q = h_delta_quat * rest_info['initial_local_quat']
+                # Temporal smoothing (Lerp)
+                current_q = bone_np.getQuat()
+                smooth_q = current_q * 0.7 + target_q * 0.3
+                smooth_q.normalize()
+                bone_np.setQuat(smooth_q)
             else:
-                # Smoothly return to rest pose if confidence is lost
                 current_q = bone_np.getQuat()
                 target_q = rest_info['initial_local_quat']
                 bone_np.setQuat(current_q * 0.9 + target_q * 0.1)
