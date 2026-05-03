@@ -3,15 +3,18 @@ set -euo pipefail
 
 # One-command Linux offline verification + 10-check quality gate.
 # Usage:
-#   scripts/run_offline_validation_linux.sh "/path/to/input.mp4" [max_frames]
+#   scripts/run_offline_validation_linux.sh "/path/to/input.mp4"
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <input_video_path> [max_frames]"
+  echo "Usage: $0 <input_video_path>"
   exit 1
 fi
 
 INPUT_VIDEO="$1"
-MAX_FRAMES="${2:-0}"
+if [[ $# -gt 1 ]]; then
+  echo "[note] Frame caps are ignored here; the full video will always be processed"
+fi
+MAX_FRAMES=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

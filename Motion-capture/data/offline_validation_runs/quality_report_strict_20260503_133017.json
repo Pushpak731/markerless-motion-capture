@@ -1,0 +1,74 @@
+{
+  "profile": "strict",
+  "overall_pass": false,
+  "passed_count": 9,
+  "total_checks": 11,
+  "checks": [
+    {
+      "name": "frames_seen_nonzero",
+      "value": 348.0,
+      "rule": ">= 1.0",
+      "passed": true
+    },
+    {
+      "name": "frames_annotation_coverage",
+      "value": 1.0,
+      "rule": ">= 1.0",
+      "passed": true
+    },
+    {
+      "name": "pose_coverage",
+      "value": 0.9253,
+      "rule": ">= 0.8",
+      "passed": true
+    },
+    {
+      "name": "mean_consistency_score",
+      "value": 0.2357,
+      "rule": ">= 0.2",
+      "passed": true
+    },
+    {
+      "name": "p50_consistency_score",
+      "value": 0.2343,
+      "rule": ">= 0.2",
+      "passed": true
+    },
+    {
+      "name": "stddev_consistency_score",
+      "value": 0.1314,
+      "rule": "<= 0.22",
+      "passed": true
+    },
+    {
+      "name": "mean_abs_normalized_deviation",
+      "value": 0.3069,
+      "rule": "<= 0.3",
+      "passed": false
+    },
+    {
+      "name": "p90_abs_normalized_deviation",
+      "value": 0.7339,
+      "rule": "<= 0.6",
+      "passed": false
+    },
+    {
+      "name": "bone_variance_mean",
+      "value": 0.003066,
+      "rule": "<= 0.03",
+      "passed": true
+    },
+    {
+      "name": "bone_stddev_mean",
+      "value": 0.053075,
+      "rule": "<= 0.18",
+      "passed": true
+    },
+    {
+      "name": "processing_fps",
+      "value": 38.457,
+      "rule": ">= 10.0",
+      "passed": true
+    }
+  ]
+}

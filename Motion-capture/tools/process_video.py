@@ -12,13 +12,26 @@ import os
 import sys
 import time
 import csv
-import math
 from statistics import mean, pstdev
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+
+CSV_BONE_FIELDS = [
+    'UpperArm_L',
+    'LowerArm_L',
+    'UpperArm_R',
+    'LowerArm_R',
+    'UpperLeg_L',
+    'LowerLeg_L',
+    'UpperLeg_R',
+    'LowerLeg_R',
+    'Shoulder',
+    'Hip',
+]
 
 
 def _pick_writer(path: str, fps: float, width: int, height: int):
@@ -41,6 +54,7 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
 
     from src.calculations import Calculations, BoneLengthTracker
     from src.detector import MocapDetector
+    from src.frame_quality import FrameQualityAnalyzer, FrameQuality, clone_landmarks, interpolate_landmarks, make_pose_output
     from src.pose_corrector import PoseCorrector
     from src.visualizer import Visualizer
 
@@ -55,7 +69,8 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
         raise RuntimeError('Could not determine input video dimensions')
 
     writer = _pick_writer(output_path, fps, width, height)
-    detector = MocapDetector()
+    detector = MocapDetector(enable_face=False, enable_hand=False)
+    detector.set_imaging_params(enable_face=False, enable_hand=False, enable_roi=False)
     corrector = PoseCorrector()
     visualizer = Visualizer()
     bone_tracker = BoneLengthTracker()
@@ -67,6 +82,7 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
         'frames_seen': 0,
         'frames_annotated': 0,
         'pose_frames': 0,
+        'usable_pose_frames': 0,
         'face_frames': 0,
         'hand_frames': 0,
         'mean_consistency_score': 0.0,
@@ -75,6 +91,8 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
         'p90_consistency_score': 0.0,
         'stddev_consistency_score': 0.0,
         'pose_coverage': 0.0,
+        'detected_pose_coverage': 0.0,
+        'usable_pose_coverage': 0.0,
         'face_coverage': 0.0,
         'hand_coverage': 0.0,
         'processing_fps': 0.0,
@@ -88,38 +106,71 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
         'bone_stddev_mean': 0.0,
         'bone_stddev_max': 0.0,
         'processing_seconds': 0.0,
+        'longest_missing_pose_streak': 0,
+        'longest_unusable_pose_streak': 0,
+        'interpolated_frame_count': 0,
+        'tracking_loss_frame_count': 0,
+        'low_confidence_frame_count': 0,
+        'partial_pose_frame_count': 0,
+        'unstable_frame_count': 0,
+        'missing_frame_count': 0,
+        'input_quality_warnings': [],
+        'recommendations': [],
     }
 
     consistency_scores = []
     abs_norm_deviation = []
-    final_variance_values = []
-    final_stddev_values = []
+    final_variance_map = {}
+    final_stddev_map = {}
     started = time.perf_counter()
     frame_idx = 0
-
-    # occlusion prediction state (per-landmark)
-    occlusion_last_position = [None] * 33  # stores ((wx,wy,wz),(ix,iy))
-    occlusion_velocity = [None] * 33
-    occlusion_frames_hidden = [0] * 33
-    occlusion_last_timestamp_ns = [None] * 33
-    OCCLUSION_MAX_PREDICTED_FRAMES = 15
-    MAX_PREDICT_SPEED_M_S = 8.0
+    analyzer = FrameQualityAnalyzer()
+    max_interpolation_gap = 5
+    pending_missing_frames = []
+    long_gap_active = False
+    last_detected_pose = None
+    last_detected_world = None
 
     # prepare CSV metrics file next to annotated output
     metrics_csv_path = os.path.splitext(output_path)[0] + "_metrics.csv"
     csv_file = open(metrics_csv_path, "w", newline='')
     csv_writer = csv.writer(csv_file)
-    csv_writer.writerow([
-        "frame_idx",
-        "timestamp_ms",
-        "processing_time_s",
-        "pose_detected",
-        "consistency_score",
-        "mean_abs_normalized_deviation",
-        "bone_variance_mean",
-        "bone_stddev_mean",
-        "pose_coverage",
-    ])
+    csv_header = [
+        'frame_idx',
+        'timestamp_ms',
+        'processing_time_s',
+        'frame_state',
+        'pose_detected',
+        'pose_usable',
+        'quality_reason',
+        'quality_score',
+        'pose_visibility_mean',
+        'pose_visibility_min',
+        'pose_low_visibility_count',
+        'visible_joint_ratio',
+        'motion_jump',
+        'bbox_area_ratio',
+        'consistency_score',
+        'mean_abs_normalized_deviation',
+        'bone_variance_mean',
+        'bone_stddev_mean',
+        'pose_coverage',
+        'detected_pose_coverage',
+        'usable_pose_coverage',
+        'source_name',
+        'stable_frame_used',
+    ]
+    for bone_name in CSV_BONE_FIELDS:
+        csv_header.extend([
+            f'Length_{bone_name}',
+            f'Normalized_{bone_name}',
+            f'Variance_{bone_name}',
+            f'StdDev_{bone_name}',
+        ])
+    # Reference lengths exported for debugging reference updates
+    for bone_name in CSV_BONE_FIELDS:
+        csv_header.append(f'Reference_Length_{bone_name}')
+    csv_writer.writerow(csv_header)
 
     def _percentile(values, pct):
         if not values:
@@ -133,6 +184,281 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
         frac = pos - lo
         return ordered[lo] * (1.0 - frac) + ordered[hi] * frac
 
+    def _landmarks_from_pose_object(pose_obj):
+        pose_lm = []
+        world_lm = None
+        if pose_obj and getattr(pose_obj, 'pose_landmarks', None):
+            pose_lm = [
+                {'x': lm.x, 'y': lm.y, 'z': getattr(lm, 'z', 0.0), 'v': getattr(lm, 'visibility', 1.0)}
+                for lm in pose_obj.pose_landmarks[0]
+            ]
+            if getattr(pose_obj, 'pose_world_landmarks', None):
+                world_lm = [
+                    {'x': lm.x, 'y': lm.y, 'z': lm.z, 'v': getattr(lm, 'visibility', 1.0)}
+                    for lm in pose_obj.pose_world_landmarks[0]
+                ]
+        return pose_lm, world_lm
+
+    def _pose_visibility_metrics(pose_obj):
+        visibilities = []
+        low_visibility_count = 0
+        if pose_obj and getattr(pose_obj, 'pose_landmarks', None):
+            for lm in pose_obj.pose_landmarks[0]:
+                vis = float(getattr(lm, 'visibility', 0.0))
+                visibilities.append(vis)
+                if vis < 0.5:
+                    low_visibility_count += 1
+        pose_vis_mean = round(sum(visibilities) / len(visibilities), 4) if visibilities else 0.0
+        pose_vis_min = round(min(visibilities), 4) if visibilities else 0.0
+        return pose_vis_mean, pose_vis_min, low_visibility_count
+
+    def _build_render_results(pose_lm, world_lm, base_results):
+        if pose_lm:
+            return {
+                'pose': make_pose_output(pose_lm, world_lm),
+                'face': base_results.get('face') if base_results else None,
+                'hand': base_results.get('hand') if base_results else None,
+            }
+        return {
+            'pose': None,
+            'face': base_results.get('face') if base_results else None,
+            'hand': base_results.get('hand') if base_results else None,
+        }
+
+    def _weighted_mean_from_map(value_map):
+        if not value_map:
+            return 0.0
+        weighted_total = 0.0
+        weight_sum = 0.0
+        for key, value in value_map.items():
+            bone_name = key.replace('Bone_Length_Variance_', '').replace('Bone_Length_StdDev_', '')
+            weight = BoneLengthTracker._bone_weight(bone_name)
+            weighted_total += float(value) * weight
+            weight_sum += weight
+        if weight_sum <= 0:
+            return 0.0
+        return weighted_total / weight_sum
+
+    def _emit_frame(frame_idx_local, timestamp_local, frame_image, base_results, pose_lm, world_lm, quality, frame_state):
+        nonlocal last_detected_pose, last_detected_world, final_variance_map, final_stddev_map
+
+        pose_obj = base_results.get('pose') if base_results else None
+        pose_vis_mean, pose_vis_min, low_visibility_count = _pose_visibility_metrics(pose_obj)
+        if frame_state != 'detected':
+            pose_vis_mean = 0.0
+            pose_vis_min = 0.0
+            low_visibility_count = 0
+
+        if pose_lm:
+            bone_result = bone_tracker.process(
+                pose_lm,
+                world_lm,
+                update_reference=bool(getattr(quality, 'pose_usable', False)),
+            )
+        else:
+            bone_result = {
+                'consistency_score': 0.0,
+                'raw_lengths': {},
+                'normalized_lengths': {},
+                'variance_lengths': {},
+                'stddev_lengths': {},
+            }
+
+        if getattr(quality, 'pose_usable', False):
+            consistency_scores.append(float(bone_result.get('consistency_score', 0.0)))
+            norm_values = []
+            for value in bone_result.get('normalized_lengths', {}).values():
+                try:
+                    norm_values.append(float(value))
+                except Exception:
+                    pass
+            if norm_values:
+                abs_norm_deviation.extend(abs(v - 1.0) for v in norm_values)
+
+            variance_map = bone_result.get('variance_lengths', {})
+            stddev_map = bone_result.get('stddev_lengths', {})
+            if variance_map:
+                final_variance_map = dict(variance_map)
+            if stddev_map:
+                final_stddev_map = dict(stddev_map)
+
+        render_results = _build_render_results(pose_lm, world_lm, base_results)
+        annotated = visualizer.draw_landmarks(frame_image.copy(), render_results)
+        annotated = visualizer.draw_fps(annotated)
+        cv2.putText(
+            annotated,
+            f'{frame_state.title()} frame: {frame_idx_local + 1}',
+            (10, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 220, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            annotated,
+            f'Quality {getattr(quality, "score", 0.0):.3f} | {getattr(quality, "reason", frame_state)}',
+            (10, 88),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 136),
+            2,
+            cv2.LINE_AA,
+        )
+        if frame_state == 'detected' and bone_result:
+            cv2.putText(
+                annotated,
+                f'Bone consistency: {bone_result.get("consistency_score", 0.0):.3f}',
+                (10, 116),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 136),
+                2,
+                cv2.LINE_AA,
+            )
+        writer.write(annotated)
+
+        stats['frames_seen'] += 1
+        stats['frames_annotated'] += 1
+        if frame_state == 'detected':
+            stats['pose_frames'] += 1
+            if getattr(quality, 'pose_usable', False):
+                stats['usable_pose_frames'] += 1
+
+        detected_pose_coverage = round(stats['pose_frames'] / max(stats['frames_seen'], 1), 4)
+        usable_pose_coverage = round(stats['usable_pose_frames'] / max(stats['frames_seen'], 1), 4)
+
+        mean_abs_dev = float(bone_result.get('mean_abs_normalized_deviation', 0.0)) if getattr(quality, 'pose_usable', False) else 0.0
+        bone_var_mean = _weighted_mean_from_map(bone_result.get('variance_lengths', {})) if getattr(quality, 'pose_usable', False) else 0.0
+        bone_std_mean = _weighted_mean_from_map(bone_result.get('stddev_lengths', {})) if getattr(quality, 'pose_usable', False) else 0.0
+        pose_coverage = detected_pose_coverage
+        row = [
+            frame_idx_local,
+            timestamp_local,
+            round(time.perf_counter() - started, 6),
+            frame_state,
+            int(bool(getattr(quality, 'pose_detected', False))),
+            int(bool(getattr(quality, 'pose_usable', False))),
+            getattr(quality, 'reason', frame_state),
+            float(getattr(quality, 'score', 0.0) or 0.0),
+            pose_vis_mean,
+            pose_vis_min,
+            low_visibility_count,
+            float(getattr(quality, 'visible_joint_ratio', 0.0) or 0.0),
+            float(getattr(quality, 'motion_jump', 0.0) or 0.0),
+            float(getattr(quality, 'bbox_area_ratio', 0.0) or 0.0),
+            float(bone_result.get('consistency_score', 0.0)) if bone_result else 0.0,
+            mean_abs_dev,
+            bone_var_mean,
+            bone_std_mean,
+            pose_coverage,
+            detected_pose_coverage,
+            usable_pose_coverage,
+            bone_result.get('source_name', '') if bone_result else '',
+            bone_result.get('stable_frame_used', False) if bone_result else False,
+        ]
+        variance_map = bone_result.get('variance_lengths', {}) if bone_result else {}
+        stddev_map = bone_result.get('stddev_lengths', {}) if bone_result else {}
+        for bone_name in CSV_BONE_FIELDS:
+            row.extend([
+                float(bone_result.get('raw_lengths', {}).get(f'Length_{bone_name}', 0.0)) if bone_result else 0.0,
+                float(bone_result.get('normalized_lengths', {}).get(f'Normalized_{bone_name}', 0.0)) if bone_result else 0.0,
+                float(variance_map.get(f'Bone_Length_Variance_{bone_name}', 0.0)) if variance_map else 0.0,
+                float(stddev_map.get(f'Bone_Length_StdDev_{bone_name}', 0.0)) if stddev_map else 0.0,
+            ])
+        # Append reference lengths for debugging whether reference was set/updated
+        ref_map = bone_result.get('reference_lengths', {}) if bone_result else {}
+        for bone_name in CSV_BONE_FIELDS:
+            row.append(float(ref_map.get(f'Reference_Length_{bone_name}', 0.0)) if ref_map else 0.0)
+        csv_writer.writerow(row)
+
+        return bone_result, render_results, detected_pose_coverage, usable_pose_coverage
+
+
+    def _emit_detected_frame(frame_idx_local, timestamp_local, frame_image, results_obj, quality_obj, pose_lm, world_lm):
+        nonlocal last_detected_pose, last_detected_world
+        bone_result, _, _, _ = _emit_frame(
+            frame_idx_local,
+            timestamp_local,
+            frame_image,
+            results_obj,
+            pose_lm,
+            world_lm,
+            quality_obj,
+            'detected',
+        )
+        if pose_lm:
+            last_detected_pose = clone_landmarks(pose_lm)
+            last_detected_world = clone_landmarks(world_lm) if world_lm else None
+        return bone_result
+
+    def _flush_missing_buffer(current_frame=None, current_results=None, current_quality=None):
+        nonlocal pending_missing_frames, long_gap_active
+        if not pending_missing_frames:
+            long_gap_active = False
+            return
+
+        if long_gap_active or current_frame is None or not last_detected_pose:
+            for buffered in pending_missing_frames:
+                missing_quality = FrameQuality(pose_detected=False, pose_usable=False, reason='tracking_loss', score=0.0)
+                _emit_frame(
+                    buffered['frame_idx'],
+                    buffered['timestamp_ms'],
+                    buffered['frame'],
+                    buffered.get('results') or {},
+                    clone_landmarks(last_detected_pose) if last_detected_pose else [],
+                    clone_landmarks(last_detected_world) if last_detected_world else None,
+                    missing_quality,
+                    'tracking_loss',
+                )
+                stats['tracking_loss_frame_count'] += 1
+            pending_missing_frames = []
+            long_gap_active = False
+            return
+
+        start_pose = clone_landmarks(last_detected_pose)
+        start_world = clone_landmarks(last_detected_world) if last_detected_world else None
+        end_pose, end_world = current_frame
+        buffered_count = len(pending_missing_frames)
+        if buffered_count <= max_interpolation_gap:
+            for offset, buffered in enumerate(pending_missing_frames, start=1):
+                fraction = offset / float(buffered_count + 1)
+                interpolated_pose = interpolate_landmarks(start_pose, end_pose, fraction)
+                interpolated_world = interpolate_landmarks(start_world, end_world, fraction) if start_world and end_world else None
+                interpolated_quality = FrameQuality(
+                    pose_detected=False,
+                    pose_usable=False,
+                    reason='interpolated',
+                    score=0.0,
+                )
+                _emit_frame(
+                    buffered['frame_idx'],
+                    buffered['timestamp_ms'],
+                    buffered['frame'],
+                    buffered.get('results') or {},
+                    interpolated_pose,
+                    interpolated_world,
+                    interpolated_quality,
+                    'interpolated',
+                )
+                stats['interpolated_frame_count'] += 1
+        else:
+            for buffered in pending_missing_frames:
+                missing_quality = FrameQuality(pose_detected=False, pose_usable=False, reason='tracking_loss', score=0.0)
+                _emit_frame(
+                    buffered['frame_idx'],
+                    buffered['timestamp_ms'],
+                    buffered['frame'],
+                    buffered.get('results') or {},
+                    start_pose,
+                    start_world,
+                    missing_quality,
+                    'tracking_loss',
+                )
+                stats['tracking_loss_frame_count'] += 1
+        pending_missing_frames = []
+        long_gap_active = False
+
     try:
         while True:
             ok, frame = capture.read()
@@ -144,158 +470,48 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
 
             timestamp_ms = int((frame_idx / fps) * 1000.0)
             results = detector.process(frame, timestamp_ms=timestamp_ms)
-            results = corrector.process(results)
-
             pose_obj = results.get('pose')
-            # Update occlusion prediction state and (short-horizon) prediction
-            now_ns = int(time.time() * 1e9)
-            if pose_obj and getattr(pose_obj, 'pose_landmarks', None) and getattr(pose_obj, 'pose_world_landmarks', None):
-                img_landmarks = pose_obj.pose_landmarks[0]
-                world_landmarks = pose_obj.pose_world_landmarks[0]
-                stats['pose_frames'] += 1
-                for i in range(min(33, len(world_landmarks), len(img_landmarks))):
-                    img_lm = img_landmarks[i]
-                    w_lm = world_landmarks[i]
-                    v = getattr(img_lm, 'visibility', 1.0)
-                    if v >= 0.3:
-                        cur_world = (w_lm.x, w_lm.y, w_lm.z)
-                        cur_img = (img_lm.x, img_lm.y)
-                        last_ts = occlusion_last_timestamp_ns[i]
-                        if occlusion_last_position[i] is not None and last_ts is not None:
-                            dt = max(1e-9, (now_ns - last_ts) / 1e9)
-                            last_world, last_img = occlusion_last_position[i]
-                            vx = (cur_world[0] - last_world[0]) / dt
-                            vy = (cur_world[1] - last_world[1]) / dt
-                            vz = (cur_world[2] - last_world[2]) / dt
-                            speed = math.sqrt(vx * vx + vy * vy + vz * vz)
-                            if speed > MAX_PREDICT_SPEED_M_S:
-                                scale = MAX_PREDICT_SPEED_M_S / speed
-                                vx *= scale; vy *= scale; vz *= scale
-                            occlusion_velocity[i] = (vx, vy, vz)
-                        occlusion_last_position[i] = (cur_world, cur_img)
-                        occlusion_last_timestamp_ns[i] = now_ns
-                        occlusion_frames_hidden[i] = 0
-                    else:
-                        # landmark currently low-confidence/occluded
-                        occlusion_frames_hidden[i] += 1
-                        if occlusion_frames_hidden[i] <= OCCLUSION_MAX_PREDICTED_FRAMES and occlusion_last_position[i] is not None and occlusion_velocity[i] is not None and occlusion_last_timestamp_ns[i] is not None:
-                            dt = max(0.0, (now_ns - occlusion_last_timestamp_ns[i]) / 1e9)
-                            last_world, last_img = occlusion_last_position[i]
-                            vx, vy, vz = occlusion_velocity[i]
-                            pred_world = (last_world[0] + vx * dt, last_world[1] + vy * dt, last_world[2] + vz * dt)
-                            # write predicted world coords back
-                            try:
-                                w_lm.x, w_lm.y, w_lm.z = pred_world
-                                # keep image coords as last known (hold)
-                                img_lm.x, img_lm.y = last_img
-                                try:
-                                    img_lm.visibility = 0.3
-                                except Exception:
-                                    pass
-                            except Exception:
-                                pass
-            else:
-                # no pose result this frame; increment hidden counters
-                for i in range(33):
-                    occlusion_frames_hidden[i] += 1
-
+            pose_lm, world_lm = _landmarks_from_pose_object(pose_obj)
+            quality = analyzer.analyze(pose_lm, width, height)
+            results = corrector.process(results, timestamp_ms=timestamp_ms, frame_quality=quality)
+            pose_obj = results.get('pose')
+            pose_lm, world_lm = _landmarks_from_pose_object(pose_obj)
             if results.get('face') and results['face'].face_landmarks:
                 stats['face_frames'] += 1
             if results.get('hand') and results['hand'].hand_landmarks:
                 stats['hand_frames'] += 1
-            # rebuild simple pose/world lists for bone tracker using possibly-updated landmarks
-            world_lm = None
-            pose_lm = []
-            if pose_obj and getattr(pose_obj, 'pose_landmarks', None):
-                pose_lm = [
-                    {'x': lm.x, 'y': lm.y, 'z': getattr(lm, 'z', 0.0), 'v': getattr(lm, 'visibility', 1.0)}
-                    for lm in pose_obj.pose_landmarks[0]
-                ]
-                if getattr(pose_obj, 'pose_world_landmarks', None):
-                    world_lm = [
-                        {'x': lm.x, 'y': lm.y, 'z': lm.z, 'v': getattr(lm, 'visibility', 1.0)}
-                        for lm in pose_obj.pose_world_landmarks[0]
-                    ]
 
-            bone_result = bone_tracker.process(pose_lm, world_lm)
-            consistency_scores.append(float(bone_result.get('consistency_score', 0.0)))
-
-            norm_values = []
-            for value in bone_result.get('normalized_lengths', {}).values():
-                try:
-                    norm_values.append(float(value))
-                except Exception:
-                    pass
-            if norm_values and pose_lm:
-                frame_abs_dev = [abs(v - 1.0) for v in norm_values]
-                abs_norm_deviation.extend(frame_abs_dev)
-
-            variance_values = []
-            for value in bone_result.get('variance_lengths', {}).values():
-                try:
-                    variance_values.append(float(value))
-                except Exception:
-                    pass
-            if variance_values:
-                final_variance_values = variance_values
-
-            stddev_values = []
-            for value in bone_result.get('stddev_lengths', {}).values():
-                try:
-                    stddev_values.append(float(value))
-                except Exception:
-                    pass
-            if stddev_values:
-                final_stddev_values = stddev_values
-
-                # write per-frame metrics to CSV
-                try:
-                    timestamp_ms = int((frame_idx / fps) * 1000.0)
-                    mean_abs_dev = float(bone_result.get('mean_abs_normalized_deviation', 0.0)) if bone_result else 0.0
-                    variance_values = [float(v) for v in bone_result.get('variance_lengths', {}).values()] if bone_result else []
-                    bone_var_mean = float((sum(variance_values) / len(variance_values)) if variance_values else 0.0)
-                    bone_std_mean = float(bone_result.get('bone_stddev_mean', 0.0)) if bone_result else 0.0
-                    pose_coverage = float(bone_result.get('pose_coverage', 0.0)) if bone_result else 0.0
-                    csv_writer.writerow([
+            if not quality.pose_detected:
+                if long_gap_active:
+                    missing_quality = FrameQuality(pose_detected=False, pose_usable=False, reason='tracking_loss', score=0.0)
+                    _emit_frame(
                         frame_idx,
                         timestamp_ms,
-                        round(time.perf_counter() - started, 6),
-                        int(bool(pose_lm)),
-                        float(bone_result.get('consistency_score', 0.0)) if bone_result else 0.0,
-                        mean_abs_dev,
-                        bone_var_mean,
-                        bone_std_mean,
-                        pose_coverage,
-                    ])
-                except Exception:
-                    pass
+                        frame,
+                        results,
+                        clone_landmarks(last_detected_pose) if last_detected_pose else [],
+                        clone_landmarks(last_detected_world) if last_detected_world else None,
+                        missing_quality,
+                        'tracking_loss',
+                    )
+                    stats['tracking_loss_frame_count'] += 1
+                else:
+                    pending_missing_frames.append({
+                        'frame_idx': frame_idx,
+                        'timestamp_ms': timestamp_ms,
+                        'frame': frame,
+                        'results': results,
+                    })
+                    if len(pending_missing_frames) > max_interpolation_gap:
+                        long_gap_active = True
+                        _flush_missing_buffer()
+                frame_idx += 1
+                continue
 
-            annotated = visualizer.draw_landmarks(frame.copy(), results)
-            annotated = visualizer.draw_fps(annotated)
-            cv2.putText(
-                annotated,
-                f'Frame {frame_idx + 1}',
-                (10, 60),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 220, 255),
-                2,
-                cv2.LINE_AA,
-            )
-            cv2.putText(
-                annotated,
-                f'Bone consistency: {bone_result.get("consistency_score", 0.0):.3f}',
-                (10, 88),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 255, 136),
-                2,
-                cv2.LINE_AA,
-            )
-            writer.write(annotated)
+            if pending_missing_frames:
+                _flush_missing_buffer(current_frame=(clone_landmarks(pose_lm), clone_landmarks(world_lm) if world_lm else None), current_results=results, current_quality=quality)
 
-            stats['frames_seen'] += 1
-            stats['frames_annotated'] += 1
+            _emit_detected_frame(frame_idx, timestamp_ms, frame, results, quality, pose_lm, world_lm)
             frame_idx += 1
     finally:
         stats['processing_seconds'] = round(time.perf_counter() - started, 3)
@@ -307,8 +523,14 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
             stats['p90_consistency_score'] = round(_percentile(consistency_scores, 90), 4)
             stats['stddev_consistency_score'] = round(pstdev(consistency_scores), 4) if len(consistency_scores) > 1 else 0.0
 
+        if pending_missing_frames:
+            long_gap_active = True
+            _flush_missing_buffer()
+
         total = max(stats['frames_seen'], 1)
         stats['pose_coverage'] = round(stats['pose_frames'] / total, 4)
+        stats['detected_pose_coverage'] = stats['pose_coverage']
+        stats['usable_pose_coverage'] = round(stats['usable_pose_frames'] / total, 4)
         stats['face_coverage'] = round(stats['face_frames'] / total, 4)
         stats['hand_coverage'] = round(stats['hand_frames'] / total, 4)
 
@@ -322,13 +544,22 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
             stats['p90_abs_normalized_deviation'] = round(_percentile(abs_norm_deviation, 90), 4)
             stats['p95_abs_normalized_deviation'] = round(_percentile(abs_norm_deviation, 95), 4)
 
-        if final_variance_values:
-            stats['bone_variance_mean'] = round(mean(final_variance_values), 6)
-            stats['bone_variance_max'] = round(max(final_variance_values), 6)
+        if final_variance_map:
+            variance_values = list(final_variance_map.values())
+            stats['bone_variance_mean'] = round(_weighted_mean_from_map(final_variance_map), 6)
+            stats['bone_variance_max'] = round(max(float(v) for v in variance_values), 6)
 
-        if final_stddev_values:
-            stats['bone_stddev_mean'] = round(mean(final_stddev_values), 6)
-            stats['bone_stddev_max'] = round(max(final_stddev_values), 6)
+        if final_stddev_map:
+            stddev_values = list(final_stddev_map.values())
+            stats['bone_stddev_mean'] = round(_weighted_mean_from_map(final_stddev_map), 6)
+            stats['bone_stddev_max'] = round(max(float(v) for v in stddev_values), 6)
+
+        quality_summary = analyzer.build_summary(
+            total_frames=total,
+            interpolated_frame_count=stats['interpolated_frame_count'],
+            tracking_loss_frame_count=stats['tracking_loss_frame_count'],
+        )
+        stats.update(quality_summary)
 
         capture.release()
         writer.release()

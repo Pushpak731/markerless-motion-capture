@@ -2,15 +2,18 @@ import numpy as np
 import time
 from src.one_euro_filter import OneEuroFilter
 from config import (
-    VISIBILITY_HARD_GATE, FILTER_MIN_CUTOFF, FILTER_BETA,
-    CALIBRATION_FRAMES
+    VISIBILITY_HARD_GATE,
+    FILTER_MIN_CUTOFF,
+    FILTER_BETA,
+    BONE_LENGTH_CALIBRATION_FRAMES,
+    BONE_LENGTH_MIN_CONFIDENCE,
 )
 
 class PoseCorrector:
     def __init__(self):
         self.calibrating = True
         self.calibration_frames = 0
-        self.max_calibration_frames = CALIBRATION_FRAMES
+        self.max_calibration_frames = BONE_LENGTH_CALIBRATION_FRAMES
         
         # Store accumulated bone lengths for averaging
         self.bone_length_buffer = {} 
@@ -39,7 +42,7 @@ class PoseCorrector:
             27: 25  # L_Ankle -> L_Knee
         }
 
-    def process(self, results):
+    def process(self, results, timestamp_ms=None, frame_quality=None):
         """
         Input: MediaPipe results object.
         Output: Modified MediaPipe results object (In-Place).
@@ -48,16 +51,25 @@ class PoseCorrector:
             return results
 
         # 1. Correct Normalized Landmarks (for Display)
+        frame_time = (timestamp_ms / 1000.0) if timestamp_ms is not None else time.time()
+        quality_score = 1.0
+        if frame_quality is not None:
+            if isinstance(frame_quality, dict):
+                quality_score = float(frame_quality.get('score', 1.0) or 1.0)
+            else:
+                quality_score = float(getattr(frame_quality, 'score', 1.0) or 1.0)
+        quality_score = max(0.0, min(1.0, quality_score))
+
         if results['pose'].pose_landmarks:
-            self._correct_skeleton(results['pose'].pose_landmarks[0], is_world=False)
+            self._correct_skeleton(results['pose'].pose_landmarks[0], frame_time, is_world=False, quality_score=quality_score, frame_quality=frame_quality)
             
         # 2. Correct World Landmarks (for Physics/Metrics)
         if results['pose'].pose_world_landmarks:
-            self._correct_skeleton(results['pose'].pose_world_landmarks[0], is_world=True)
+            self._correct_skeleton(results['pose'].pose_world_landmarks[0], frame_time, is_world=True, quality_score=quality_score, frame_quality=frame_quality)
 
         return results
 
-    def _correct_skeleton(self, landmarks, is_world=False):
+    def _correct_skeleton(self, landmarks, frame_time, is_world=False, quality_score=1.0, frame_quality=None):
         """Shared logic for both landmark types."""
         # Create coords and visibility map
         coords = {}
@@ -69,13 +81,13 @@ class PoseCorrector:
         # 1. 1 Euro Smoothing
         # Use separate filters for world vs normalized to avoid state conflict
         prefix = "w_" if is_world else "n_"
-        t = time.time()
         for i in coords:
             key = f"{prefix}{i}"
             
             # --- VISIBILITY HARD GATE ---
             # If confidence is low, ignore this frame's update and HOLD last valid position.
             vis = visibility.get(i, 1.0)
+            blended_quality = max(0.0, min(1.0, vis * quality_score))
             if vis < VISIBILITY_HARD_GATE:
                 # If we have a filter, use its last valid state
                 if key in self.filters:
@@ -84,29 +96,33 @@ class PoseCorrector:
                     # This effectively "freezes" the joint until visibility returns.
                 else:
                     # First frame is bad? Initialize filter but trust it for now.
-                    self.filters[key] = OneEuroFilter(t, coords[i], min_cutoff=self.min_cutoff, beta=self.beta)
+                    self.filters[key] = OneEuroFilter(frame_time, coords[i], min_cutoff=self.min_cutoff, beta=self.beta)
                 continue
             # -----------------------------
 
             if key not in self.filters:
                 # World coords (meters) move faster than Normalized (0-1), 
                 # but beta accounts for change rate. 
-                self.filters[key] = OneEuroFilter(t, coords[i], min_cutoff=self.min_cutoff, beta=self.beta)
+                self.filters[key] = OneEuroFilter(frame_time, coords[i], min_cutoff=self.min_cutoff, beta=self.beta)
             else:
-                coords[i] = self.filters[key](t, coords[i])
+                if blended_quality < 0.1:
+                    coords[i] = self.filters[key].x_prev
+                else:
+                    held = self.filters[key].x_prev
+                    adjusted = blended_quality * coords[i] + (1.0 - blended_quality) * held
+                    coords[i] = self.filters[key](frame_time, adjusted)
 
         # 2. Calibration vs Correction
         # We only calibrate on Normalized (easier consistency) or World? 
         # Actually bone lengths constrained in meters (World) make more sense.
         # But for now, let's strictly constrain whatever we are given.
         if self.calibrating:
-             # Only learn from World if available? No, stick to what's passed.
-             # Actually, learning normalized lengths is risky if distance changes.
-             # Let's only learn if this is World, OR if we accept normalized scaling.
-             # PROPOSAL: Only enforce constraints on World Landmarks for physics accuracy.
-             # Display landmarks (normalized) can just be smoothed.
-             if is_world:
-                 self._calibrate(coords)
+            # Only learn bone lengths from reliable frames. Gate calibration by
+            # frame_quality.pose_usable (provided by upstream FrameQualityAnalyzer)
+            # and per-joint visibility to avoid contaminating references with
+            # single good frames interleaved with poor frames.
+            if is_world:
+                self._calibrate(coords, visibility, frame_quality)
         else:
              # Apply constraints logic
              # If we haven't calibrated (or are 2D), should we skip?
@@ -121,20 +137,49 @@ class PoseCorrector:
         for i, lm in enumerate(landmarks):
             lm.x, lm.y, lm.z = coords[i][0], coords[i][1], coords[i][2]
 
-    def _calibrate(self, coords):
-        """Learn the user's bone lengths (World Units)."""
+    def _calibrate(self, coords, visibility, frame_quality=None):
+        """Learn the user's bone lengths (World Units).
+
+        Only accumulate bone-length samples when the incoming frame is deemed
+        usable by the FrameQualityAnalyzer (frame_quality.pose_usable == True)
+        and when both joints for the bone have sufficient visibility. This
+        prevents single good frames from seeding unstable references.
+        """
+        usable = True
+        if frame_quality is not None:
+            if isinstance(frame_quality, dict):
+                usable = bool(frame_quality.get('pose_usable', True))
+            else:
+                usable = bool(getattr(frame_quality, 'pose_usable', True))
+
+        if not usable:
+            return
+
         for child, parent in self.hierarchy.items():
+            vis_child = visibility.get(child, 0.0)
+            vis_parent = visibility.get(parent, 0.0)
+
+            # Require both joints to exceed min confidence to count toward calibration
+            if vis_child < BONE_LENGTH_MIN_CONFIDENCE or vis_parent < BONE_LENGTH_MIN_CONFIDENCE:
+                continue
+
             dist = np.linalg.norm(coords[child] - coords[parent])
-            
+
             if child not in self.bone_length_buffer:
                 self.bone_length_buffer[child] = []
             self.bone_length_buffer[child].append(dist)
-            
-        self.calibration_frames += 1
+
+        # Only increment calibration frame counter when we actually collected samples
+        collected = any(self.bone_length_buffer.get(c) for c in self.hierarchy.keys())
+        if collected:
+            self.calibration_frames += 1
+
         if self.calibration_frames >= self.max_calibration_frames:
             print("Pose Corrector: Calibration Complete. Physics Constraints Active.")
             for child, lengths in self.bone_length_buffer.items():
-                self.ref_bone_lengths[child] = np.mean(lengths)
+                if lengths:
+                    self.ref_bone_lengths[child] = np.mean(lengths)
+            self.bone_length_buffer.clear()
             self.calibrating = False
 
     def _apply_constraints(self, coords, visibility):

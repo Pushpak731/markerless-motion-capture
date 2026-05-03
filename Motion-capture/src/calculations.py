@@ -64,6 +64,25 @@ class BoneLengthTracker:
         self._frame_count = 0
 
     @staticmethod
+    def _bone_weight(bone_name: str, joint_weights: dict[str, float] | None = None) -> float:
+        if joint_weights and bone_name in joint_weights:
+            return float(joint_weights[bone_name])
+
+        if 'UpperArm' in bone_name:
+            return 0.7
+        if 'LowerArm' in bone_name:
+            return 0.4
+        if 'UpperLeg' in bone_name:
+            return 0.8
+        if 'LowerLeg' in bone_name:
+            return 0.5
+        if 'Shoulder' in bone_name:
+            return 1.0
+        if 'Hip' in bone_name:
+            return 1.0
+        return 0.6
+
+    @staticmethod
     def _landmarks_to_map(landmarks):
         if not landmarks:
             return {}
@@ -166,14 +185,15 @@ class BoneLengthTracker:
                 self._reference_lengths[bone_name] = float(sum(samples) / len(samples))
         self._reference_buffers.clear()
 
-    def process(self, pose_landmarks, world_landmarks=None):
+    def process(self, pose_landmarks, world_landmarks=None, update_reference: bool = True, joint_weights: dict[str, float] | None = None):
         """Return stabilized bone metrics for the best available coordinate source."""
         source_name = 'world' if world_landmarks else 'pose'
         source_landmarks = world_landmarks if world_landmarks else pose_landmarks
         smoothed_landmarks = self._smooth_landmarks(source_landmarks)
         raw_lengths = self._compute_lengths(smoothed_landmarks)
 
-        self._update_reference(raw_lengths)
+        if update_reference:
+            self._update_reference(raw_lengths)
 
         reference_lengths = dict(self._reference_lengths)
         normalized_lengths = {}
@@ -181,12 +201,13 @@ class BoneLengthTracker:
         variance_lengths = {}
         stddev_lengths = {}
 
-        consistency_terms = []
+        weighted_terms = []
+        weighted_total = 0.0
         for bone_name, raw_value in raw_lengths.items():
             reference_value = reference_lengths.get(bone_name)
             if reference_value is None or reference_value <= 1e-9:
                 reference_value = raw_value
-                if bone_name not in self._reference_lengths:
+                if update_reference and bone_name not in self._reference_lengths:
                     self._reference_lengths[bone_name] = raw_value
 
             normalized_lengths[f'Normalized_{bone_name}'] = round(raw_value / max(reference_value, 1e-9), 4)
@@ -202,11 +223,13 @@ class BoneLengthTracker:
             variance_lengths[f'Bone_Length_Variance_{bone_name}'] = round(stats.variance, 6)
             stddev_lengths[f'Bone_Length_StdDev_{bone_name}'] = round(stats.stddev, 6)
 
-            consistency_terms.append(min(1.0, deviation / max(self.max_deviation, 1e-9)))
+            weight = self._bone_weight(bone_name, joint_weights=joint_weights)
+            weighted_terms.append(min(1.0, deviation / max(self.max_deviation, 1e-9)) * weight)
+            weighted_total += weight
 
         consistency_score = 1.0
-        if consistency_terms:
-            consistency_score = max(0.0, 1.0 - (sum(consistency_terms) / len(consistency_terms)))
+        if weighted_terms and weighted_total > 0:
+            consistency_score = max(0.0, 1.0 - (sum(weighted_terms) / weighted_total))
 
         world_lengths = {
             f'World_{name}': round(value, 4)
@@ -222,6 +245,7 @@ class BoneLengthTracker:
         metrics.update(world_lengths)
         metrics.update({f'Reference_{name}': round(value, 4) for name, value in reference_lengths.items()})
         metrics['Bone_Consistency_Score'] = round(consistency_score, 4)
+        metrics['Stable_Frame_Used'] = bool(update_reference)
 
         return {
             'source_name': source_name,
@@ -235,6 +259,7 @@ class BoneLengthTracker:
             'stddev_lengths': stddev_lengths,
             'reference_lengths': {f'Reference_{name}': round(value, 4) for name, value in reference_lengths.items()},
             'consistency_score': round(consistency_score, 4),
+            'stable_frame_used': bool(update_reference),
         }
 class Calculations:
     POSE_IDX = {

@@ -11,31 +11,23 @@ from config import (
     FACE_EXPOSURE_TARGET, FACE_EXPOSURE_MIN_GAIN, FACE_EXPOSURE_MAX_GAIN,
     FACE_EXPOSURE_MIN_BRIGHTNESS, CLAHE_CLIP_LIMIT, CLAHE_TILE_GRID_SIZE,
     ENABLE_FACE_DETECTION, ENABLE_HAND_DETECTION, ENABLE_FACE_EXPOSURE,
-    ENABLE_ROI_CROPPING, ROI_EXPANSION_FACTOR, ROI_MIN_SIZE,
-    ROI_TARGET_SIZE, ROI_SMOOTHING_ALPHA, PREFER_GPU_DELEGATE,
+    PREFER_GPU_DELEGATE,
     INFERENCE_BACKEND,
     ABLATION_DISABLE_FRAME_RESIZE, ABLATION_DISABLE_CLAHE_DEL,
     CUDA_ENABLED, MPS_ENABLED
 )
 
 class MocapDetector:
-    def __init__(self):
-        self.enable_face = ENABLE_FACE_DETECTION
-        self.enable_hand = ENABLE_HAND_DETECTION
+    def __init__(self, enable_face=None, enable_hand=None):
+        self.enable_face = ENABLE_FACE_DETECTION if enable_face is None else bool(enable_face)
+        self.enable_hand = ENABLE_HAND_DETECTION if enable_hand is None else bool(enable_hand)
         
         # Imaging Settings
         self.gamma = GAMMA_DEFAULT
         self.face_exposure = ENABLE_FACE_EXPOSURE
         self.last_face_rect = None # (x, y, w, h)
         self.last_timestamp_ms = 0
-        
-        # ROI Cropping
-        self.enable_roi_cropping = ENABLE_ROI_CROPPING
-        self.last_roi = None  # (x, y, w, h) in original frame coords
-        self.roi_expansion = ROI_EXPANSION_FACTOR
-        self.roi_min_size = ROI_MIN_SIZE
-        self.roi_target_size = ROI_TARGET_SIZE
-        self.roi_alpha = ROI_SMOOTHING_ALPHA
+        self.last_roi = None
 
         # Pre-allocate CLAHE once (reused every frame to avoid per-frame allocation leak)
         self._clahe = cv2.createCLAHE(clipLimit=CLAHE_CLIP_LIMIT, tileGridSize=CLAHE_TILE_GRID_SIZE)
@@ -54,10 +46,10 @@ class MocapDetector:
         self.pose_landmarker = self._build_pose_landmarker(pose_model_path)
 
         # 2. Face Landmarker
-        self.face_landmarker = self._build_face_landmarker(MODEL_PATHS['FACE'])
+        self.face_landmarker = self._build_face_landmarker(MODEL_PATHS['FACE']) if self.enable_face else None
 
         # 3. Hand Landmarker
-        self.hand_landmarker = self._build_hand_landmarker(MODEL_PATHS['HAND'])
+        self.hand_landmarker = self._build_hand_landmarker(MODEL_PATHS['HAND']) if self.enable_hand else None
 
         # GPU delegate flag for hardware-specific frame handling:
         # CVPixelBuffer on Apple Silicon requires height to be a multiple of 16.
@@ -189,8 +181,6 @@ class MocapDetector:
         self.face_exposure = face_exposure
         self.enable_face = enable_face
         self.enable_hand = enable_hand
-        if enable_roi is not None:
-            self.enable_roi_cropping = enable_roi
 
     def _apply_gamma(self, image, gamma=1.0):
         if gamma == 1.0: return image
@@ -238,69 +228,16 @@ class MocapDetector:
         import numpy as np
         
         H_orig, W_orig = frame.shape[:2]
-        
-        # --- ROI CROPPING (High Quality) ---
-        # We crop from the ORIGINAL frame to preserve maximum detail.
-        roi_x, roi_y, roi_w, roi_h = 0, 0, W_orig, H_orig # Defaults
-        roi_active = False
-        
-        # Determine effective frame to process
-        processing_frame = frame
-        
-        if self.enable_roi_cropping and self.last_roi is not None:
-            x, y, w, h = self.last_roi
-            
-            # ROI Coords are in W_orig, H_orig scale
-            # Expand ROI
-            expand = int(max(w, h) * self.roi_expansion)
-            x = max(0, x - expand)
-            y = max(0, y - expand)
-            w = min(W_orig - x, w + 2 * expand)
-            h = min(H_orig - y, h + 2 * expand)
-            
-            # Ensure minimum size
-            if w >= self.roi_min_size and h >= self.roi_min_size:
-                # Crop from original (unprocessed) frame
-                roi_frame = frame[y:y+h, x:x+w]
-                
-                # Resize to target size for inference
-                # e.g. Crop 500x500 -> Resize 640x640 (Upscale or Downscale)
-                max_dim = max(w, h)
-                scale_to_target = self.roi_target_size / max_dim
-                
-                new_w = int(w * scale_to_target)
-                new_h = int(h * scale_to_target)
-                processing_frame = cv2.resize(roi_frame, (new_w, new_h))
-                
-                # Store EXACT ROI params for reprojection formula
-                roi_x, roi_y = x, y
-                roi_w, roi_h = w, h
-                roi_active = True
-            else:
-                # ROI invalid/too small? Fallback to full frame
-                processing_frame = frame
-                # Standard Resize if full frame is massive
-                if not ABLATION_DISABLE_FRAME_RESIZE and W_orig > MAX_FRAME_WIDTH:
-                   scale = MAX_FRAME_WIDTH / W_orig
-                   new_h = int(H_orig * scale)
-                   # CVPixelBuffer (Metal/MPS) requires height to be a multiple of 16.
-                   # int() truncation can produce e.g. 360 (not /16), causing -6662 abort.
-                   if self.use_gpu_delegate:
-                       new_h = ((new_h + 15) // 16) * 16
-                   processing_frame = cv2.resize(frame, (MAX_FRAME_WIDTH, new_h))
-        else:
-            # 1. Resize for consistency (if too large)
-            if not ABLATION_DISABLE_FRAME_RESIZE and W_orig > MAX_FRAME_WIDTH:
-                scale = MAX_FRAME_WIDTH / W_orig
-                new_h = int(H_orig * scale)
-                # CVPixelBuffer (Metal/MPS) requires height to be a multiple of 16.
-                # int() truncation can produce e.g. 360 (not /16), causing -6662 abort.
-                if self.use_gpu_delegate:
-                    new_h = ((new_h + 15) // 16) * 16
-                processing_frame = cv2.resize(frame, (MAX_FRAME_WIDTH, new_h))
-                
-        # Update frame reference for filters
-        frame = processing_frame
+
+        # Always process the full frame. ROI cropping is intentionally removed
+        # because it delayed reacquisition on fast motion and made offline runs
+        # depend on prior-frame tracking quality.
+        if not ABLATION_DISABLE_FRAME_RESIZE and W_orig > MAX_FRAME_WIDTH:
+            scale = MAX_FRAME_WIDTH / W_orig
+            new_h = int(H_orig * scale)
+            if self.use_gpu_delegate:
+                new_h = ((new_h + 15) // 16) * 16
+            frame = cv2.resize(frame, (MAX_FRAME_WIDTH, new_h))
             
         # 2. Gamma Correction
         if self.gamma != 1.0:
@@ -350,57 +287,8 @@ class MocapDetector:
         pose_result = self.pose_landmarker.detect_for_video(mp_image, timestamp_ms)
         t_pose_end = time.perf_counter()
         
-        # --- REPROJECT LANDMARKS TO ORIGINAL FRAME ---
         if pose_result and pose_result.pose_landmarks:
-            plm = pose_result.pose_landmarks[0]
-            
-            # Reproject landmarks in-place using User's Formula
-            if roi_active:
-                for lm in plm:
-                    # User Formula: full_x = roi_x + lm.x * roi_w
-                    px_full_x = roi_x + lm.x * roi_w
-                    px_full_y = roi_y + lm.y * roi_h
-                    
-                    # Normalize back to [0,1] of ORIGINAL frame
-                    lm.x = px_full_x / W_orig
-                    lm.y = px_full_y / H_orig
-            else:
-                 # Standard logic (if simple resize happens)
-                 # If we resized the input frame, we just need to confirm aspect ratio.
-                 # MP outputs normalized [0,1].
-                 # If we resized 1920x1080 -> 960x540, normalized x=0.5 is still x=0.5.
-                 # So NO REPROJECTION needed for standard resize 
-                 # UNLESS aspect ratio changed (which we avoided).
-                 pass
-            
-            # Now lm.x, lm.y are normalized to ORIGINAL frame.
-            
-            # --- UPDATE NEXT ROI ---
-            xs = [lm.x * W_orig for lm in plm]
-            ys = [lm.y * H_orig for lm in plm]
-            
-            x_min, x_max = int(min(xs)), int(max(xs))
-            y_min, y_max = int(min(ys)), int(max(ys))
-            new_roi = (x_min, y_min, x_max - x_min, y_max - y_min)
-            
-            # Smooth ROI position
-            if self.enable_roi_cropping:
-                if self.last_roi is not None:
-                    a = self.roi_alpha
-                    self.last_roi = (
-                        int(a * new_roi[0] + (1-a) * self.last_roi[0]),
-                        int(a * new_roi[1] + (1-a) * self.last_roi[1]),
-                        int(a * new_roi[2] + (1-a) * self.last_roi[2]),
-                        int(a * new_roi[3] + (1-a) * self.last_roi[3])
-                    )
-                else:
-                    self.last_roi = new_roi
-            else:
-                 self.last_roi = None
-
-        elif self.enable_roi_cropping:
-             # Lost tracking? Reset.
-             self.last_roi = None 
+            self.last_roi = None
 
         
         face_result = None
@@ -460,7 +348,7 @@ class MocapDetector:
             'pose': pose_result,
             'face': face_result,
             'hand': hand_result,
-            'roi': self.last_roi if self.enable_roi_cropping else None,
+            'roi': None,
             'inference_ms': {
                 'pose': t_pose_ms,
                 'face': t_face_ms,

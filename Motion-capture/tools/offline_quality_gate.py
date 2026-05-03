@@ -63,11 +63,12 @@ def evaluate(summary: dict, profile_name: str = "balanced") -> dict:
 
     frames_seen = float(summary.get("frames_seen", 0) or 0)
     frames_annotated = float(summary.get("frames_annotated", 0) or 0)
+    usable_pose_coverage = float(summary.get("usable_pose_coverage", summary.get("pose_coverage", 0.0)) or 0.0)
 
     results = [
         _check_ge("frames_seen_nonzero", frames_seen, 1.0),
         _check_ge("frames_annotation_coverage", (frames_annotated / frames_seen) if frames_seen > 0 else 0.0, 1.0),
-        _check_ge("pose_coverage", float(summary.get("pose_coverage", 0.0) or 0.0), profile["pose_coverage_min"]),
+        _check_ge("pose_coverage", usable_pose_coverage, profile["pose_coverage_min"]),
         _check_ge("mean_consistency_score", float(summary.get("mean_consistency_score", 0.0) or 0.0), profile["mean_consistency_min"]),
         _check_ge("p50_consistency_score", float(summary.get("p50_consistency_score", 0.0) or 0.0), profile["p50_consistency_min"]),
         _check_le("stddev_consistency_score", float(summary.get("stddev_consistency_score", 0.0) or 0.0), profile["stddev_consistency_max"]),
@@ -86,6 +87,18 @@ def evaluate(summary: dict, profile_name: str = "balanced") -> dict:
         "overall_pass": passed_count == total,
         "passed_count": passed_count,
         "total_checks": total,
+        "detected_pose_coverage": round(float(summary.get("detected_pose_coverage", summary.get("pose_coverage", 0.0)) or 0.0), 6),
+        "usable_pose_coverage": round(usable_pose_coverage, 6),
+        "longest_missing_pose_streak": int(summary.get("longest_missing_pose_streak", 0) or 0),
+        "longest_unusable_pose_streak": int(summary.get("longest_unusable_pose_streak", 0) or 0),
+        "interpolated_frame_count": int(summary.get("interpolated_frame_count", 0) or 0),
+        "tracking_loss_frame_count": int(summary.get("tracking_loss_frame_count", 0) or 0),
+        "low_confidence_frame_count": int(summary.get("low_confidence_frame_count", 0) or 0),
+        "partial_pose_frame_count": int(summary.get("partial_pose_frame_count", 0) or 0),
+        "unstable_frame_count": int(summary.get("unstable_frame_count", 0) or 0),
+        "joint_dropout_rate_per_joint": summary.get("joint_dropout_rate_per_joint", {}),
+        "input_quality_warnings": summary.get("input_quality_warnings", []),
+        "recommendations": summary.get("recommendations", []),
         "checks": [
             {
                 "name": r.name,
