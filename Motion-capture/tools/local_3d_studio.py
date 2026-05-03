@@ -252,9 +252,9 @@ class AvatarStudio(ShowBase):
                     self._avatar.setScale(1.7 / height)
 
             # Map bones using controlJoint on the Actor
+            available_joints = {j.getName() for j in self._avatar.getJoints()}
             for bone_name in BONE_MAP:
-                # Check if joint exists first
-                if not self._avatar.find(f"**/{bone_name}").isEmpty():
+                if bone_name in available_joints:
                     # Some models need 'modelRoot', others None
                     bone_np = self._avatar.controlJoint(None, 'modelRoot', bone_name)
                     if not bone_np or bone_np.isEmpty():
@@ -263,11 +263,8 @@ class AvatarStudio(ShowBase):
                     if bone_np and not bone_np.isEmpty():
                         self._controlled_joints[bone_name] = bone_np
                         print(f"  [studio] Successfully controlling: {bone_name}")
-                    else:
-                        print(f"  [studio] Skipping missing joint: {bone_name}")
                 else:
-                    # Case-insensitive or prefix check if needed
-                    pass
+                    print(f"  [studio] Skipping missing joint: {bone_name}")
 
             print(f"[studio] Model loaded: {os.path.basename(glb_path)}")
             print(f"[studio] Bones successfully controlled: {len(self._controlled_joints)} / {len(BONE_MAP)}")
@@ -389,12 +386,15 @@ class AvatarStudio(ShowBase):
                 # We'll try to align the bone to our tracked vector
                 q = LQuaternionf()
                 
-                # Use a more standard rest vector (Up for most bones in Panda3D space)
-                rest_vec = Vec3(0, 0, 1) 
+                # Use Forward (Y+) as the rest vector
+                rest_vec = Vec3(0, 1, 0) 
                 
-                # For arms, they might point sideways in T-pose, but let's try Up first
+                # Align the bone to our tracked vector
                 q.setShortestArc(rest_vec, vec)
                 bone_np.setQuat(q)
+                
+                if frame_idx % 30 == 0 and bone_name == list(BONE_MAP.keys())[0]:
+                    print(f"[debug] Frame {frame_idx} | {bone_name} vec: {vec}")
             except Exception as e:
                 pass
 
