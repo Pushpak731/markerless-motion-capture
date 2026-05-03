@@ -236,6 +236,8 @@ class AvatarStudio(ShowBase):
             self._avatar = Actor(model_np)
             self._avatar.reparentTo(self.render)
             self._avatar.setPos(0, 0, 0)
+            self._avatar.setH(180) # Face the camera
+            self._avatar.stop()    # Stop default animations
 
             # Debug: Print ALL joint names
             print("[studio] Full joint list found in model:")
