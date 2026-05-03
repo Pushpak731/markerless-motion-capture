@@ -422,17 +422,32 @@ class AvatarStudio(ShowBase):
             angle = h_rest_vec.angleDeg(h_now_vec)
             
             # --- NATURAL CONSTRAINTS & DAMPING ---
-            damping = 0.8
-            if 'torso' in bone_name or 'Spine' in bone_name:
-                damping = 0.3
+            # Define hard limits (in degrees) to prevent "bone breaking" poses
+            JOINT_LIMITS = {
+                'torso': 25,
+                'Spine': 25,
+                'leg': 85,
+                'arm': 115,
+            }
             
-            angle *= damping
+            max_angle = 120 # Default
+            for key, limit in JOINT_LIMITS.items():
+                if key in bone_name:
+                    max_angle = limit
+                    break
+
+            damping = 0.8
+            if max_angle < 30:
+                damping = 0.4 # More damping for stiff joints (torso)
+            
+            # Clamp the angle to prevent extreme poses
+            final_angle = min(max(angle * damping, -max_angle), max_angle)
 
             if axis.length() > 1e-6:
                 axis.normalize()
-                h_delta_quat.setFromAxisAngle(angle, axis)
+                h_delta_quat.setFromAxisAngle(final_angle, axis)
             elif h_rest_vec.dot(h_now_vec) < -0.99:
-                h_delta_quat.setFromAxisAngle(180 * damping, Vec3(0, 0, 1))
+                h_delta_quat.setFromAxisAngle(min(180 * damping, max_angle), Vec3(0, 0, 1))
 
             # --- Avatar Side ---
             if bone_name not in self._bone_rest_data:
@@ -440,21 +455,22 @@ class AvatarStudio(ShowBase):
                     'initial_local_quat': bone_np.getQuat() 
                 }
 
-            # --- Apply with High Smoothing ---
+            # --- Apply with High Smoothing (Slerp-like) ---
             confidence = min(h_now_start['v'], h_now_end['v'])
             rest_info = self._bone_rest_data[bone_name]
             
-            if confidence > 0.3:
+            if confidence > 0.35:
                 target_q = h_delta_quat * rest_info['initial_local_quat']
-                # Ultra-smooth temporal interpolation
                 current_q = bone_np.getQuat()
-                smooth_q = current_q * 0.9 + target_q * 0.1 
+                # Panda3D Quat Lerp/Slerp logic
+                alpha = 0.15 
+                smooth_q = current_q * (1.0 - alpha) + target_q * alpha
                 smooth_q.normalize()
                 bone_np.setQuat(smooth_q)
             else:
                 current_q = bone_np.getQuat()
                 target_q = rest_info['initial_local_quat']
-                bone_np.setQuat(current_q * 0.95 + target_q * 0.05)
+                bone_np.setQuat(current_q * 0.9 + target_q * 0.1)
 
         # 3. Final Mesh Update
         if hasattr(self, '_avatar') and self._avatar:
