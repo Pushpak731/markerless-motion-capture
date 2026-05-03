@@ -226,7 +226,7 @@ class AvatarStudio(ShowBase):
             self._avatar = Actor(glb_path)
             self._avatar.reparentTo(self.render)
             self._avatar.setPos(0, 0, 0)
-            self._avatar.setH(90)  # Face the camera (adjusted from 180)
+            self._avatar.setH(180) # Face the camera (Default for most GLBs)
             self._avatar.stop()    # Stop default animations
 
             # Debug: Print ALL joint names
@@ -280,9 +280,10 @@ class AvatarStudio(ShowBase):
         self.accept('r', self._restart)
         self.accept('arrow_right', self._step_forward)
         self.accept('arrow_left', self._step_backward)
-        # Rotation controls
+        # Rotation and orientation controls
         self.accept('a', self._rotate_left)
         self.accept('d', self._rotate_right)
+        self.accept('f', self._flip_character)
 
     def _rotate_left(self):
         if hasattr(self, '_avatar'):
@@ -291,6 +292,10 @@ class AvatarStudio(ShowBase):
     def _rotate_right(self):
         if hasattr(self, '_avatar'):
             self._avatar.setH(self._avatar.getH() - 10)
+
+    def _flip_character(self):
+        if hasattr(self, '_avatar'):
+            self._avatar.setH(self._avatar.getH() + 180)
 
     def _draw_hud(self):
         from direct.gui.OnscreenText import OnscreenText
