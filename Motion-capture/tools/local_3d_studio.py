@@ -378,28 +378,29 @@ class AvatarStudio(ShowBase):
             if j_start['v'] < 0.3 or j_end['v'] < 0.3:
                 continue
 
-            # Direction vector from start to end joint (MediaPipe: y-down, z-toward camera)
-            # Remap to Panda3D space (y-forward, z-up)
+            # Direction vector from start to end joint
+            # MediaPipe World: X (right), Y (down), Z (away/depth)
+            # Panda3D Scene:   X (right), Y (forward), Z (up)
             dx = j_end['x'] - j_start['x']
-            dy = (j_end['z'] - j_start['z'])    # MP Z is already depth/forward
-            dz = -(j_end['y'] - j_start['y'])   # MP Y is down, so -Y is up
-
+            dy = j_end['z'] - j_start['z']   # MP depth -> P3D forward
+            dz = -(j_end['y'] - j_start['y']) # MP down -> P3D up (negative)
+            
             vec = Vec3(dx, dy, dz)
             length = vec.length()
             if length < 1e-6:
                 continue
             vec.normalize()
 
-            # Compute rotation using lookAt for better stability across different rigs
+            # Compute rotation using lookAt
             try:
-                # We want the bone to point along 'vec'
-                # In Panda3D, lookAt(target, up) will rotate the node's +Y (forward) axis to target
-                # Some models use +Z, but let's try +Y (forward) first as it's standard for lookAt
-                target_pos = bone_np.getPos() + vec
+                # We want the bone to point along 'vec' in its local space.
+                # Since we are overriding the bone, its local orientation is now our responsibility.
+                target_pos = vec # Treating vec as a relative target from (0,0,0)
                 bone_np.lookAt(target_pos, Vec3(0, 0, 1))
                 
-                # Calibration: Most GLB bones point along +Z, not +Y. 
-                # If he's mangled, we might need a 90-deg offset.
+                # Calibration: Most GLB bones point along +Z, but lookAt uses +Y.
+                # We must rotate the bone so its mesh-intended axis (Z) aligns with the lookAt target (Y).
+                bone_np.setR(bone_np, 90) # Adjust for common GLB bone orientations
                 
                 if frame_idx % 30 == 0 and bone_name == 'Skeleton_arm_joint_R':
                     print(f"[debug] Frame {frame_idx} | {bone_name} vec: {vec} | hpr: {bone_np.getHpr()}")
