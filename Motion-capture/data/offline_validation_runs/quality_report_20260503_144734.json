@@ -1,0 +1,130 @@
+{
+  "profile": "balanced",
+  "overall_pass": false,
+  "passed_count": 10,
+  "total_checks": 11,
+  "detected_pose_coverage": 0.908,
+  "usable_pose_coverage": 0.296,
+  "longest_missing_pose_streak": 20,
+  "longest_unusable_pose_streak": 74,
+  "interpolated_frame_count": 8,
+  "tracking_loss_frame_count": 24,
+  "low_confidence_frame_count": 22,
+  "partial_pose_frame_count": 125,
+  "unstable_frame_count": 58,
+  "joint_dropout_rate_per_joint": {
+    "0": 0.0,
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.0,
+    "4": 0.0,
+    "5": 0.0,
+    "6": 0.0,
+    "7": 0.0,
+    "8": 0.0,
+    "9": 0.0,
+    "10": 0.0,
+    "11": 0.0,
+    "12": 0.0,
+    "13": 0.296,
+    "14": 0.8362,
+    "15": 0.3046,
+    "16": 0.8391,
+    "17": 0.3075,
+    "18": 0.842,
+    "19": 0.3132,
+    "20": 0.842,
+    "21": 0.3707,
+    "22": 0.8592,
+    "23": 0.0,
+    "24": 0.0,
+    "25": 0.1868,
+    "26": 0.6925,
+    "27": 0.1034,
+    "28": 0.4167,
+    "29": 0.158,
+    "30": 0.2759,
+    "31": 0.1006,
+    "32": 0.3994
+  },
+  "input_quality_warnings": [
+    "usable pose coverage is low",
+    "missing runs exceed interpolation window",
+    "several consecutive frames are unstable or low confidence",
+    "some joints drop out frequently"
+  ],
+  "recommendations": [
+    "Increase capture quality or reduce motion blur so short gaps stay within interpolation range.",
+    "Keep the full body in frame and improve lighting to raise usable pose coverage.",
+    "Pay attention to the joints with the highest dropout rate; they are the weakest parts of the track.",
+    "Slow down rapid movement or move the camera farther back to reduce unstable detections."
+  ],
+  "checks": [
+    {
+      "name": "frames_seen_nonzero",
+      "value": 348.0,
+      "rule": ">= 1.0",
+      "passed": true
+    },
+    {
+      "name": "frames_annotation_coverage",
+      "value": 1.0,
+      "rule": ">= 1.0",
+      "passed": true
+    },
+    {
+      "name": "pose_coverage",
+      "value": 0.296,
+      "rule": ">= 0.7",
+      "passed": false
+    },
+    {
+      "name": "mean_consistency_score",
+      "value": 0.7294,
+      "rule": ">= 0.1",
+      "passed": true
+    },
+    {
+      "name": "p50_consistency_score",
+      "value": 0.66,
+      "rule": ">= 0.1",
+      "passed": true
+    },
+    {
+      "name": "stddev_consistency_score",
+      "value": 0.1818,
+      "rule": "<= 0.3",
+      "passed": true
+    },
+    {
+      "name": "mean_abs_normalized_deviation",
+      "value": 0.0867,
+      "rule": "<= 0.45",
+      "passed": true
+    },
+    {
+      "name": "p90_abs_normalized_deviation",
+      "value": 0.3517,
+      "rule": "<= 0.85",
+      "passed": true
+    },
+    {
+      "name": "bone_variance_mean",
+      "value": 0.000366,
+      "rule": "<= 0.05",
+      "passed": true
+    },
+    {
+      "name": "bone_stddev_mean",
+      "value": 0.017261,
+      "rule": "<= 0.25",
+      "passed": true
+    },
+    {
+      "name": "processing_fps",
+      "value": 9.583,
+      "rule": ">= 8.0",
+      "passed": true
+    }
+  ]
+}
