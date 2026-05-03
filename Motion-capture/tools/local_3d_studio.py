@@ -125,6 +125,7 @@ def load_csv_frames(csv_path):
 
 try:
     from direct.showbase.ShowBase import ShowBase
+    from direct.actor.Actor import Actor
     from panda3d.core import (
         AmbientLight, DirectionalLight, NodePath,
         Vec3, Vec4, LQuaternionf, LVecBase3f,
@@ -187,18 +188,32 @@ class AvatarStudio(ShowBase):
 
     def _load_avatar(self, glb_path):
         try:
-            # Handle different versions of panda3d-gltf
+            # Load the model using the GLTF loader
+            model_np = None
             if hasattr(panda3d_gltf, 'load_model'):
-                self._avatar = panda3d_gltf.load_model(glb_path)
+                model_np = panda3d_gltf.load_model(glb_path)
             elif hasattr(panda3d_gltf, 'patch_loader'):
                 panda3d_gltf.patch_loader(self.loader)
-                self._avatar = self.loader.loadModel(glb_path)
+                model_np = self.loader.loadModel(glb_path)
             else:
-                # Fallback to direct load if possible
-                self._avatar = self.loader.loadModel(glb_path)
-                
+                model_np = self.loader.loadModel(glb_path)
+
+            if not model_np:
+                print(f"[studio] ERROR: Could not load model from {glb_path}")
+                return
+
+            # Wrap in Actor to enable joint control
+            self._avatar = Actor(model_np)
             self._avatar.reparentTo(self.render)
             self._avatar.setPos(0, 0, 0)
+
+            # Debug: Print joint names to help with mapping
+            print("[studio] Joint list found in model:")
+            joints = self._avatar.getJoints()
+            for j in joints[:10]: # Print first 10
+                print(f"  - {j.getName()}")
+            if len(joints) > 10:
+                print(f"  ... and {len(joints)-10} more")
 
             # Scale to ~1.7m height
             bounds = self._avatar.getTightBounds()
@@ -208,19 +223,26 @@ class AvatarStudio(ShowBase):
                 if height > 0:
                     self._avatar.setScale(1.7 / height)
 
-            # Map Mixamo bones using controlJoint
+            # Map bones using controlJoint on the Actor
             for bone_name in BONE_MAP:
+                # Part name is usually 'modelRoot' for GLB loads
                 bone_np = self._avatar.controlJoint(None, 'modelRoot', bone_name)
                 if bone_np:
                     self._controlled_joints[bone_name] = bone_np
-                    print(f"  [studio] Mapped bone: {bone_name}")
+                    print(f"  [studio] Controlled joint: {bone_name}")
                 else:
-                    print(f"  [studio] Bone not found (check rig): {bone_name}")
+                    # Try finding without part name
+                    bone_np = self._avatar.controlJoint(None, 'modelRoot', bone_name)
+                    if not bone_np:
+                        # Some models might need case-insensitive search or have prefixes
+                        pass
 
             print(f"[studio] Model loaded: {os.path.basename(glb_path)}")
-            print(f"[studio] Bones mapped: {len(self._controlled_joints)} / {len(BONE_MAP)}")
+            print(f"[studio] Bones successfully controlled: {len(self._controlled_joints)} / {len(BONE_MAP)}")
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"[studio] ERROR loading model: {e}")
             self._avatar = None
 
