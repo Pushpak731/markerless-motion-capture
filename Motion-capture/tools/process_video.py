@@ -128,6 +128,11 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
     max_interpolation_gap = 5
     pending_missing_frames = []
     long_gap_active = False
+    asymmetry_deltas = {
+        'arms': [],
+        'legs': []
+    }
+    high_jitter_frames = 0
 
     # --- Raw 3D Node Export (for local Panda3D avatar studio) ---
     raw_nodes_csv_path = os.path.splitext(output_path)[0] + '_raw_3d_nodes.csv'
@@ -261,7 +266,7 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
         return weighted_total / weight_sum
 
     def _emit_frame(frame_idx_local, timestamp_local, frame_image, base_results, pose_lm, world_lm, quality, frame_state):
-        nonlocal last_detected_pose, last_detected_world, final_variance_map, final_stddev_map
+        nonlocal last_detected_pose, last_detected_world, final_variance_map, final_stddev_map, high_jitter_frames, asymmetry_deltas
 
         pose_obj = base_results.get('pose') if base_results else None
         pose_vis_mean, pose_vis_min, low_visibility_count = _pose_visibility_metrics(pose_obj)
@@ -302,6 +307,22 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
                 final_variance_map = dict(variance_map)
             if stddev_map:
                 final_stddev_map = dict(stddev_map)
+
+        if world_lm and len(world_lm) == 33:
+            # Arm asymmetry
+            l_arm = bone_result.get('raw_lengths', {}).get('Length_UpperArm_L', 0) + bone_result.get('raw_lengths', {}).get('Length_LowerArm_L', 0)
+            r_arm = bone_result.get('raw_lengths', {}).get('Length_UpperArm_R', 0) + bone_result.get('raw_lengths', {}).get('Length_LowerArm_R', 0)
+            if l_arm > 0 and r_arm > 0:
+                asymmetry_deltas['arms'].append(abs(l_arm - r_arm) / max(l_arm, r_arm, 1e-9))
+            
+            # Leg asymmetry
+            l_leg = bone_result.get('raw_lengths', {}).get('Length_UpperLeg_L', 0) + bone_result.get('raw_lengths', {}).get('Length_LowerLeg_L', 0)
+            r_leg = bone_result.get('raw_lengths', {}).get('Length_UpperLeg_R', 0) + bone_result.get('raw_lengths', {}).get('Length_LowerLeg_R', 0)
+            if l_leg > 0 and r_leg > 0:
+                asymmetry_deltas['legs'].append(abs(l_leg - r_leg) / max(l_leg, r_leg, 1e-9))
+
+        if float(getattr(quality, 'motion_jump', 0.0) or 0.0) > 0.2:
+            high_jitter_frames += 1
 
         render_results = _build_render_results(pose_lm, world_lm, base_results)
         annotated = visualizer.draw_landmarks(frame_image.copy(), render_results)
@@ -584,6 +605,17 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
             stddev_values = list(final_stddev_map.values())
             stats['bone_stddev_mean'] = round(_weighted_mean_from_map(final_stddev_map), 6)
             stats['bone_stddev_max'] = round(max(float(v) for v in stddev_values), 6)
+
+        stats['asymmetry_analysis'] = {
+            'mean_arm_asymmetry': round(mean(asymmetry_deltas['arms']), 4) if asymmetry_deltas['arms'] else 0.0,
+            'mean_leg_asymmetry': round(mean(asymmetry_deltas['legs']), 4) if asymmetry_deltas['legs'] else 0.0,
+            'max_arm_asymmetry': round(max(asymmetry_deltas['arms']), 4) if asymmetry_deltas['arms'] else 0.0,
+            'max_leg_asymmetry': round(max(asymmetry_deltas['legs']), 4) if asymmetry_deltas['legs'] else 0.0,
+        }
+        stats['jitter_analysis'] = {
+            'high_jitter_count': high_jitter_frames,
+            'high_jitter_ratio': round(high_jitter_frames / total, 4),
+        }
 
         quality_summary = analyzer.build_summary(
             total_frames=total,

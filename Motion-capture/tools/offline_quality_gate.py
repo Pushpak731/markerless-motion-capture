@@ -65,6 +65,9 @@ def evaluate(summary: dict, profile_name: str = "balanced") -> dict:
     frames_annotated = float(summary.get("frames_annotated", 0) or 0)
     usable_pose_coverage = float(summary.get("usable_pose_coverage", summary.get("pose_coverage", 0.0)) or 0.0)
 
+    from reliability_engine import calculate_reliability
+    reliability_report = calculate_reliability(summary)
+
     results = [
         _check_ge("frames_seen_nonzero", frames_seen, 1.0),
         _check_ge("frames_annotation_coverage", (frames_annotated / frames_seen) if frames_seen > 0 else 0.0, 1.0),
@@ -77,6 +80,7 @@ def evaluate(summary: dict, profile_name: str = "balanced") -> dict:
         _check_le("bone_variance_mean", float(summary.get("bone_variance_mean", 0.0) or 0.0), profile["bone_variance_mean_max"]),
         _check_le("bone_stddev_mean", float(summary.get("bone_stddev_mean", 0.0) or 0.0), profile["bone_stddev_mean_max"]),
         _check_ge("processing_fps", float(summary.get("processing_fps", 0.0) or 0.0), profile["processing_fps_min"]),
+        _check_ge("reliability_score", reliability_report['reliability_score'], 70.0),
     ]
 
     passed_count = sum(1 for r in results if r.passed)
@@ -87,6 +91,7 @@ def evaluate(summary: dict, profile_name: str = "balanced") -> dict:
         "overall_pass": passed_count == total,
         "passed_count": passed_count,
         "total_checks": total,
+        "reliability_report": reliability_report,
         "detected_pose_coverage": round(float(summary.get("detected_pose_coverage", summary.get("pose_coverage", 0.0)) or 0.0), 6),
         "usable_pose_coverage": round(usable_pose_coverage, 6),
         "longest_missing_pose_streak": int(summary.get("longest_missing_pose_streak", 0) or 0),
