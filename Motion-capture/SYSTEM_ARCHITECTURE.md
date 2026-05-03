@@ -15,9 +15,24 @@ Configured in `config.py` with `MULTI_CAMERA_MODE`:
 
 This document focuses on `master` mode because that is where multi-camera architecture runs.
 
+## 2) Offline Intelligence Pipeline
+
+While multi-camera fusion handles spatial redundancy, the **Offline Pipeline** provides the "analytical brain" for single-camera 2D-to-3D translation.
+
+### Core Logic Chain:
+1. **Detection**: `MocapDetector` runs MediaPipe HEAVY landmarks.
+2. **Refinement** (`PoseCorrector`): 
+   - **Gating**: Low-visibility joints are rejected.
+   - **Smoothing**: `OneEuroFilter` balances jitter vs. lag.
+   - **Calibration**: First 30 frames establish "Reference Bone Lengths."
+   - **Stabilization**: Bones are clamped to a **15% physical deviation limit**.
+3. **Reliability** (`ReliabilityEngine`):
+   - Categorizes asymmetry as either **Perspective Angle** (consistent) or **Tracking Error** (volatile).
+   - Generates a **Reliability Score (0-100)** for the trial.
+
 ---
 
-## 2) Two-Node Setup
+## 3) Two-Node Setup (Multi-Camera)
 
 ```
 Windows Node (server)                Mac Node (master)
