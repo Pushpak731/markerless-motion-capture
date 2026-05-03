@@ -378,32 +378,33 @@ class AvatarStudio(ShowBase):
             if j_start['v'] < 0.3 or j_end['v'] < 0.3:
                 continue
 
-            # Direction vector from start to end joint
-            # MediaPipe World: X (right), Y (down), Z (away/depth)
-            # Panda3D Scene:   X (right), Y (forward), Z (up)
+            # Direction vector from start to end joint (World Space)
             dx = j_end['x'] - j_start['x']
-            dy = j_end['z'] - j_start['z']   # MP depth -> P3D forward
-            dz = -(j_end['y'] - j_start['y']) # MP down -> P3D up (negative)
+            dy = j_end['z'] - j_start['z']
+            dz = -(j_end['y'] - j_start['y'])
+            world_vec = Vec3(dx, dy, dz)
             
-            vec = Vec3(dx, dy, dz)
-            length = vec.length()
-            if length < 1e-6:
+            if world_vec.length() < 1e-6:
                 continue
-            vec.normalize()
+            world_vec.normalize()
 
-            # Compute rotation using lookAt
+            # Compute rotation
             try:
-                # We want the bone to point along 'vec' in its local space.
-                # Since we are overriding the bone, its local orientation is now our responsibility.
-                target_pos = vec # Treating vec as a relative target from (0,0,0)
-                bone_np.lookAt(target_pos, Vec3(0, 0, 1))
+                # Transform the world-space direction into the bone's PARENT space
+                # This is the key to preventing the "collapsed noodle" effect
+                parent = bone_np.getParent()
+                local_vec = parent.getRelativeVector(self.render, world_vec)
                 
-                # Calibration: Most GLB bones point along +Z, but lookAt uses +Y.
-                # We must rotate the bone so its mesh-intended axis (Z) aligns with the lookAt target (Y).
-                bone_np.setR(bone_np, 90) # Adjust for common GLB bone orientations
+                # Now rotate the bone to point along this local vector
+                # Most GLB bones point along their local +Z axis
+                bone_np.lookAt(local_vec, Vec3(0, 0, 1))
+                
+                # Adjust for GLB bone orientation (Z-up vs Y-forward)
+                # If lookAt makes it point Y-forward, we roll it 90 deg to align Z-up
+                bone_np.setR(bone_np, 90)
                 
                 if frame_idx % 30 == 0 and bone_name == 'Skeleton_arm_joint_R':
-                    print(f"[debug] Frame {frame_idx} | {bone_name} vec: {vec} | hpr: {bone_np.getHpr()}")
+                    print(f"[debug] Frame {frame_idx} | {bone_name} local_vec: {local_vec}")
             except Exception as e:
                 pass
         
