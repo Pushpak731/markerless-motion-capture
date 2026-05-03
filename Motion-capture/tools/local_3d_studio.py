@@ -388,23 +388,30 @@ class AvatarStudio(ShowBase):
                 continue
             world_vec.normalize()
 
-            # Compute rotation
+            # --- RELATIVE RETARGETING (The "No-Pretzel" Fix) ---
             try:
-                # Transform the world-space direction into the bone's PARENT space
-                # This is the key to preventing the "collapsed noodle" effect
-                parent = bone_np.getParent()
-                local_vec = parent.getRelativeVector(self.render, world_vec)
+                # 1. Capture the "Rest Pose" on the very first frame
+                if not hasattr(self, '_bone_rest_data'):
+                    self._bone_rest_data = {}
                 
-                # Now rotate the bone to point along this local vector
-                # Most GLB bones point along their local +Z axis
-                bone_np.lookAt(local_vec, Vec3(0, 0, 1))
+                if bone_name not in self._bone_rest_data:
+                    # Store initial world direction and initial local rotation
+                    self._bone_rest_data[bone_name] = {
+                        'rest_vec': world_vec,
+                        'rest_quat': bone_np.getQuat()
+                    }
                 
-                # Adjust for GLB bone orientation (Z-up vs Y-forward)
-                # If lookAt makes it point Y-forward, we roll it 90 deg to align Z-up
-                bone_np.setR(bone_np, 90)
+                # 2. Calculate the "Delta Rotation" (How much did the human move vs their start?)
+                rest_info = self._bone_rest_data[bone_name]
+                delta_quat = LQuaternionf()
+                delta_quat.setShortestArc(rest_info['rest_vec'], world_vec)
+                
+                # 3. Apply the delta on top of the character's original orientation
+                # We apply the rotation in WORLD space, then let Panda3D handle the parent/child hierarchy
+                bone_np.setQuat(self.render, delta_quat * rest_info['rest_quat'])
                 
                 if frame_idx % 30 == 0 and bone_name == 'Skeleton_arm_joint_R':
-                    print(f"[debug] Frame {frame_idx} | {bone_name} local_vec: {local_vec}")
+                    print(f"[debug] Frame {frame_idx} | {bone_name} delta: {delta_quat}")
             except Exception as e:
                 pass
         
