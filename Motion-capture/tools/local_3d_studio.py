@@ -24,7 +24,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 # --- DEBUG OPTIONS ---
-DEBUG_ONLY_BONE = 'Skeleton_torso_joint_1' # Isolate torso first as recommended
+DEBUG_ONLY_BONE = None 
 SHOW_DEBUG_SKELETON = True
 # --------------------
 
@@ -398,54 +398,58 @@ class AvatarStudio(ShowBase):
             'z': (l_sho['z'] + r_sho['z']) / 2,
         }
 
-        # 1. Root Translation (Increased scale for noticeable movement)
-        scale = 8.0 # 8 meters room scale
+        # 1. Root Translation
+        scale = 8.0
         root_x = mid_hip['x'] * scale
         root_y = mid_hip['z'] * scale
         root_z = -mid_hip['y'] * scale
-        
         raw_root = Vec3(root_x, root_y, root_z)
         
         if not hasattr(self, "_root_origin"):
-            self._root_origin = raw_root
-            print(f"[studio] Root Origin set: {self._root_origin}")
+            # Only set origin if we have decent hip visibility
+            if joints['left_hip']['v'] > 0.5 and joints['right_hip']['v'] > 0.5:
+                self._root_origin = raw_root
+                print(f"[studio] Root Origin initialized at frame {frame_idx}: {self._root_origin}")
+            else:
+                return # Wait for clean data
 
-        # Final position relative to frame 0
         target_pos = raw_root - self._root_origin
-        
-        # Smooth and Ground
         if not hasattr(self, "_last_root_pos"): self._last_root_pos = target_pos
         self._last_root_pos = self._last_root_pos * 0.7 + target_pos * 0.3
-        
-        # Force grounded at Z=0
         self._avatar.setPos(self._last_root_pos[0], self._last_root_pos[1], 0)
 
-        # 2. Capture Rest Data (Frame 0)
-        if frame_idx == 0:
-            self._human_rest_joints = joints
-            self._human_rest_mid_hip = mid_hip
-            self._human_rest_mid_sho = mid_sho
-            self._bone_rest_data = {} 
-            
-            for bone_name, (start_name, end_name) in BONE_MAP.items():
-                bone_np = self._controlled_joints.get(bone_name)
-                if not bone_np: continue
+        # 2. Capture Rest Data (Search for first "Clean" frame)
+        if not hasattr(self, "_human_rest_joints"):
+            # Check if this frame is a good candidate for a T-Pose/Rest Pose
+            vis_values = [j['v'] for j in joints.values()]
+            avg_v = sum(vis_values) / len(vis_values) if vis_values else 0
+            if avg_v > 0.6: # Good enough visibility
+                self._human_rest_joints = joints
+                self._human_rest_mid_hip = mid_hip
+                self._human_rest_mid_sho = mid_sho
+                self._bone_rest_data = {} 
                 
-                # Capture the ACTUAL rest vector of the bone in the avatar's local space
-                child_joint = None
-                for child in bone_np.getChildren():
-                    if 'joint' in child.getName().lower() or 'mixamo' in child.getName().lower():
-                        child_joint = child
-                        break
-                
-                avatar_rest_vec = child_joint.getPos() if child_joint else Vec3(0, 0, 1)
-                if avatar_rest_vec.length() < 1e-6: avatar_rest_vec = Vec3(0, 0, 1)
-                avatar_rest_vec.normalize()
+                for b_name, (s_name, e_name) in BONE_MAP.items():
+                    b_np = self._controlled_joints.get(b_name)
+                    if not b_np: continue
+                    
+                    child_j = None
+                    for c in b_np.getChildren():
+                        if 'joint' in c.getName().lower() or 'mixamo' in c.getName().lower():
+                            child_j = c
+                            break
+                    
+                    a_rest_vec = child_j.getPos() if child_j else Vec3(0, 0, 1)
+                    if a_rest_vec.length() < 1e-6: a_rest_vec = Vec3(0, 0, 1)
+                    a_rest_vec.normalize()
 
-                self._bone_rest_data[bone_name] = {
-                    'initial_local_quat': bone_np.getQuat(),
-                    'avatar_rest_vec': avatar_rest_vec
-                }
+                    self._bone_rest_data[b_name] = {
+                        'initial_local_quat': b_np.getQuat(),
+                        'avatar_rest_vec': a_rest_vec
+                    }
+                print(f"[studio] Rest Pose captured at frame {frame_idx} (Avg Confidence: {avg_v:.2f})")
+            else:
+                return # Skip until we have a good rest pose
 
         # Debug Print playback
         if frame_idx % 30 == 0:
@@ -496,8 +500,8 @@ class AvatarStudio(ShowBase):
             # Apply delta to the rest orientation
             target_q = h_delta_quat * rest_info['initial_local_quat']
             
-            # Slerp-like smoothing
-            alpha = 0.3 if conf > 0.4 else 0.1
+            # FAST response for limbs
+            alpha = 0.5 if conf > 0.5 else 0.1
             current_q = bone_np.getQuat()
             smooth_q = current_q * (1.0 - alpha) + target_q * alpha
             smooth_q.normalize()
