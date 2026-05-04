@@ -168,7 +168,7 @@ Pre-packaging: world-axis transform applied; optional 3D One-Euro filter on `x/y
 - `NUM_POSES = 1`, `NUM_FACES = 1`, `NUM_HANDS = 2`
 - `MAX_FRAME_WIDTH = 640`
 - `NETWORK_STREAM_WIDTH = 640`, `NETWORK_STREAM_HEIGHT = 360`
-- `NETWORK_JPEG_QUALITY = 35`
+- `NETWORK_JPEG_QUALITY = 30`
 - `ENABLE_CLOCK_SYNC = True`
 
 ---
@@ -192,7 +192,7 @@ The following settings on that repo differ from what the Windows node needs:
 | `ENABLE_CLOCK_SYNC` | missing | `True` | Clocks not aligned |
 | `CLOCK_SYNC_PORT` | missing | `6003` | Clock sync unavailable |
 | `FEEDBACK_PORT` | missing | `6002` | No quality feedback |
-| `NETWORK_JPEG_QUALITY` | missing | `35` | Full-quality JPEGs sent |
+| `NETWORK_JPEG_QUALITY` | missing | `30` | Full-quality JPEGs sent |
 | `NETWORK_STREAM_WIDTH/HEIGHT` | missing | `640 / 360` | Full-res frames sent |
 | `STALE_FRAME_TIMEOUT_MS` | missing | `5000` | Unknown eviction behavior |
 
@@ -350,9 +350,10 @@ Master mode display path in `main_gui.py`:
 - `DATA_PORT = 6001`
 - `FEEDBACK_PORT = 6002`
 - `CLOCK_SYNC_PORT = 6003`
-- `SYNC_TIME_THRESHOLD_MS = 100.0`
-- `FRAME_BUFFER_SIZE = 2`
-- `STALE_FRAME_TIMEOUT_MS = 2000`
+- `SYNC_TIME_THRESHOLD_MS = 200.0`
+- `SYNC_DYNAMIC_THRESHOLD_ENABLED = False`
+- `FRAME_BUFFER_SIZE = 30`
+- `STALE_FRAME_TIMEOUT_MS = 5000`
 - `TRIANGULATION_MIN_VIEWS = 2`
 - `REPROJECTION_ERROR_THRESHOLD = 15.0`
 - `STEREO_POINT_MIN_INPUT_CONFIDENCE = 0.5`

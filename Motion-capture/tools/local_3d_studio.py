@@ -20,12 +20,22 @@ import os
 import sys
 import csv
 import time
+import re
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
 # --- DEBUG OPTIONS ---
 DEBUG_ONLY_BONE = None 
 SHOW_DEBUG_SKELETON = True
+ROOT_VERTICAL_ENABLED = False
+GROUND_LOCK_ENABLED = True
+EXACT_RETARGETING_MODE = True
+ACTION_GAIN_MULTIPLIER = 1.0
+MIN_SEGMENT_CONFIDENCE = 0.15
+DEBUG_CAPTURE_ENABLED = True
+DEBUG_CAPTURE_INTERVAL_FRAMES = 30
+DEBUG_CAPTURE_MAX_SCREENSHOTS = 12
+DEBUG_LOG_INTERVAL_FRAMES = 5
 # --------------------
 
 # ─── Mixamo Bone Mapping ────────────────────────────────────────────────────
@@ -53,8 +63,8 @@ BONE_MAP_MIXAMO = {
     'mixamorigLeftLeg':       ('left_knee',       'left_ankle'),
     'mixamorigRightUpLeg':    ('right_hip',       'right_knee'),
     'mixamorigRightLeg':      ('right_knee',      'right_ankle'),
-    'mixamorigSpine':         ('left_hip',        'left_shoulder'),
-    'mixamorigNeck':          ('left_shoulder',   'nose'),
+    'mixamorigSpine':         ('__mid_hip__',     '__mid_sho__'),
+    'mixamorigNeck':          ('__mid_sho__',     'nose'),
 }
 
 BONE_MAP_CESIUM = {
@@ -66,7 +76,7 @@ BONE_MAP_CESIUM = {
     'leg_joint_L_2':             ('left_knee',       'left_ankle'),
     'leg_joint_R_1':             ('right_hip',       'right_knee'),
     'leg_joint_R_2':             ('right_knee',      'right_ankle'),
-    'Skeleton_torso_joint_1':    ('left_hip',        'left_shoulder'),
+    'Skeleton_torso_joint_1':    ('__mid_hip__',     '__mid_sho__'),
 }
 
 BONE_RETARGET_SPECS = {
@@ -93,6 +103,84 @@ BONE_RETARGET_SPECS = {
 
 # Default
 BONE_MAP = BONE_MAP_MIXAMO
+
+BONE_ALIASES = {
+    'mixamorigLeftArm': (
+        'mixamorig:LeftArm', 'LeftArm', 'leftUpperArm',
+        'J_Bip_L_UpperArm', 'UpperArm_L', 'upper_arm.L'
+    ),
+    'mixamorigLeftForeArm': (
+        'mixamorig:LeftForeArm', 'LeftForeArm', 'leftLowerArm',
+        'J_Bip_L_LowerArm', 'LowerArm_L', 'forearm.L', 'lower_arm.L'
+    ),
+    'mixamorigRightArm': (
+        'mixamorig:RightArm', 'RightArm', 'rightUpperArm',
+        'J_Bip_R_UpperArm', 'UpperArm_R', 'upper_arm.R'
+    ),
+    'mixamorigRightForeArm': (
+        'mixamorig:RightForeArm', 'RightForeArm', 'rightLowerArm',
+        'J_Bip_R_LowerArm', 'LowerArm_R', 'forearm.R', 'lower_arm.R'
+    ),
+    'mixamorigLeftUpLeg': (
+        'mixamorig:LeftUpLeg', 'LeftUpLeg', 'leftUpperLeg',
+        'J_Bip_L_UpperLeg', 'UpperLeg_L', 'thigh.L'
+    ),
+    'mixamorigLeftLeg': (
+        'mixamorig:LeftLeg', 'LeftLeg', 'leftLowerLeg',
+        'J_Bip_L_LowerLeg', 'LowerLeg_L', 'shin.L', 'calf.L'
+    ),
+    'mixamorigRightUpLeg': (
+        'mixamorig:RightUpLeg', 'RightUpLeg', 'rightUpperLeg',
+        'J_Bip_R_UpperLeg', 'UpperLeg_R', 'thigh.R'
+    ),
+    'mixamorigRightLeg': (
+        'mixamorig:RightLeg', 'RightLeg', 'rightLowerLeg',
+        'J_Bip_R_LowerLeg', 'LowerLeg_R', 'shin.R', 'calf.R'
+    ),
+    'mixamorigSpine': (
+        'mixamorig:Spine', 'Spine', 'spine', 'J_Bip_C_Spine',
+        'J_Bip_C_Chest', 'Chest'
+    ),
+    'mixamorigNeck': (
+        'mixamorig:Neck', 'Neck', 'neck', 'J_Bip_C_Neck'
+    ),
+}
+
+
+def normalize_bone_name(name):
+    """Normalize rig names so namespaces/punctuation do not break matching."""
+    return re.sub(r'[^a-z0-9]', '', str(name).lower())
+
+
+def resolve_bone_name(canonical_name, available_joints):
+    """Resolve a canonical mapping key to the actual joint name in the loaded GLB."""
+    if canonical_name in available_joints:
+        return canonical_name
+
+    by_normalized = {}
+    for joint_name in available_joints:
+        by_normalized.setdefault(normalize_bone_name(joint_name), []).append(joint_name)
+
+    candidates = (canonical_name, *BONE_ALIASES.get(canonical_name, ()))
+    candidate_keys = [normalize_bone_name(candidate) for candidate in candidates]
+
+    for key in candidate_keys:
+        if key in by_normalized:
+            return by_normalized[key][0]
+
+    for key in candidate_keys:
+        for joint_key, joint_names in by_normalized.items():
+            if joint_key.endswith(key):
+                return joint_names[0]
+
+    return None
+
+
+def count_resolved_bones(bone_map, available_joints):
+    return sum(
+        1 for canonical_name in bone_map
+        if resolve_bone_name(canonical_name, available_joints)
+    )
 
 # ─── File Picker ─────────────────────────────────────────────────────────────
 
@@ -171,6 +259,14 @@ def load_csv_frames(csv_path):
 
 
 def get_bone_spec(bone_name):
+    if EXACT_RETARGETING_MODE:
+        return {
+            'gain': 1.0,
+            'limit': 180.0,
+            'alpha': 1.0,
+            'invert': False,
+        }
+
     spec = BONE_RETARGET_SPECS.get(bone_name, {})
     return {
         'gain': spec.get('gain', 0.35),
@@ -219,6 +315,19 @@ def make_segment_vector(state, start_name, end_name):
     )
 
 
+def get_segment_confidence(state, start_name, end_name):
+    joints = state['joints']
+
+    def joint_conf(name):
+        if name == '__mid_hip__':
+            return min(joints['left_hip']['v'], joints['right_hip']['v'])
+        if name == '__mid_sho__':
+            return min(joints['left_shoulder']['v'], joints['right_shoulder']['v'])
+        return joints[name]['v']
+
+    return min(joint_conf(start_name), joint_conf(end_name))
+
+
 # ─── Panda3D App ─────────────────────────────────────────────────────────────
 
 try:
@@ -227,7 +336,7 @@ try:
     from panda3d.core import (
         AmbientLight, DirectionalLight, NodePath,
         Vec3, Vec4, LQuaternionf, LVecBase3f,
-        WindowProperties, AntialiasAttrib
+        WindowProperties, AntialiasAttrib, Filename
     )
     import gltf as panda3d_gltf
 except ImportError as e:
@@ -257,12 +366,16 @@ class AvatarStudio(ShowBase):
         self._last_frame_time = time.time()
         self._playing = True
         self._controlled_joints = {}
+        self._debug_screenshot_count = 0
+        self._debug_writer = None
+        self._debug_log_file = None
 
         self._setup_lights()
         self._load_avatar(glb_path)
         self._setup_camera()
         self._setup_controls()
         self._draw_hud()
+        self._setup_debug_capture(glb_path)
 
         # Tick loop
         self.taskMgr.add(self._update_task, 'update')
@@ -306,14 +419,7 @@ class AvatarStudio(ShowBase):
         grid_np.setZ(-0.01)
 
     def _load_avatar(self, glb_path):
-        # Determine bone map based on filename
         global BONE_MAP
-        if "CesiumMan" in glb_path:
-            BONE_MAP = BONE_MAP_CESIUM
-            print("[studio] Using CesiumMan bone mapping")
-        else:
-            BONE_MAP = BONE_MAP_MIXAMO
-            print("[studio] Using Mixamo bone mapping")
 
         try:
             # Patch the loader to support GLTF if not already done
@@ -338,6 +444,17 @@ class AvatarStudio(ShowBase):
             for j in joints:
                 print(f"  - {j.getName()}")
 
+            available_joints = {j.getName() for j in joints}
+            mixamo_score = count_resolved_bones(BONE_MAP_MIXAMO, available_joints)
+            cesium_score = count_resolved_bones(BONE_MAP_CESIUM, available_joints)
+
+            if cesium_score > mixamo_score:
+                BONE_MAP = BONE_MAP_CESIUM
+                print(f"[studio] Using CesiumMan bone mapping ({cesium_score}/{len(BONE_MAP_CESIUM)} matched)")
+            else:
+                BONE_MAP = BONE_MAP_MIXAMO
+                print(f"[studio] Using Mixamo bone mapping ({mixamo_score}/{len(BONE_MAP_MIXAMO)} matched)")
+
             # Scale to ~1.7m height
             bounds = self._avatar.getTightBounds()
             if bounds:
@@ -352,19 +469,24 @@ class AvatarStudio(ShowBase):
                 self._model_ground_offset = 0.0
 
             # Map bones using controlJoint on the Actor
-            available_joints = {j.getName() for j in self._avatar.getJoints()}
             for bone_name in BONE_MAP:
-                if bone_name in available_joints:
+                actual_joint_name = resolve_bone_name(bone_name, available_joints)
+                if actual_joint_name:
                     # Use controlJoint with partName=None for direct skeletal override
-                    bone_np = self._avatar.controlJoint(None, 'modelRoot', bone_name)
+                    bone_np = self._avatar.controlJoint(None, 'modelRoot', actual_joint_name)
                     if not bone_np or bone_np.isEmpty():
-                        bone_np = self._avatar.controlJoint(None, 'model', bone_name)
+                        bone_np = self._avatar.controlJoint(None, 'model', actual_joint_name)
                     if not bone_np or bone_np.isEmpty():
-                        bone_np = self._avatar.controlJoint(None, None, bone_name)
+                        bone_np = self._avatar.controlJoint(None, None, actual_joint_name)
                     
                     if bone_np and not bone_np.isEmpty():
                         self._controlled_joints[bone_name] = bone_np
-                        print(f"  [studio] Successfully controlling: {bone_name}")
+                        if actual_joint_name == bone_name:
+                            print(f"  [studio] Successfully controlling: {bone_name}")
+                        else:
+                            print(f"  [studio] Successfully controlling: {bone_name} -> {actual_joint_name}")
+                    else:
+                        print(f"  [studio] Found joint but could not control: {bone_name} -> {actual_joint_name}")
                 else:
                     print(f"  [studio] Skipping missing joint: {bone_name}")
 
@@ -392,6 +514,59 @@ class AvatarStudio(ShowBase):
         self.accept('a', self._rotate_left)
         self.accept('d', self._rotate_right)
         self.accept('f', self._flip_character)
+
+    def _setup_debug_capture(self, glb_path):
+        if not DEBUG_CAPTURE_ENABLED:
+            return
+
+        run_name = time.strftime("%Y%m%d_%H%M%S")
+        model_name = os.path.splitext(os.path.basename(glb_path))[0]
+        self._debug_dir = os.path.join(
+            os.getcwd(),
+            'data',
+            'local_3d_debug',
+            f'{run_name}_{model_name}',
+        )
+        os.makedirs(self._debug_dir, exist_ok=True)
+
+        log_path = os.path.join(self._debug_dir, 'retarget_debug.csv')
+        self._debug_log_file = open(log_path, 'w', newline='')
+        self._debug_writer = csv.DictWriter(
+            self._debug_log_file,
+            fieldnames=[
+                'frame_idx', 'timestamp_ms', 'bone_name',
+                'start_joint', 'end_joint', 'confidence',
+                'human_delta_deg', 'applied_angle_deg',
+                'target_x', 'target_y', 'target_z',
+            ],
+        )
+        self._debug_writer.writeheader()
+        self._debug_log_file.flush()
+        print(f"[studio] Debug capture enabled: {self._debug_dir}")
+
+    def _write_debug_rows(self, rows):
+        if not rows or not self._debug_writer:
+            return
+
+        self._debug_writer.writerows(rows)
+        self._debug_log_file.flush()
+
+    def _capture_debug_screenshot(self, frame_idx):
+        if (
+            not DEBUG_CAPTURE_ENABLED
+            or not hasattr(self, '_debug_dir')
+            or self._debug_screenshot_count >= DEBUG_CAPTURE_MAX_SCREENSHOTS
+            or frame_idx % DEBUG_CAPTURE_INTERVAL_FRAMES != 0
+        ):
+            return
+
+        screenshot_path = os.path.join(
+            self._debug_dir,
+            f'frame_{frame_idx:04d}.png',
+        )
+        self.win.saveScreenshot(Filename.fromOsSpecific(screenshot_path))
+        self._debug_screenshot_count += 1
+        print(f"[studio] Saved debug screenshot: {screenshot_path}")
 
     def _rotate_left(self):
         if hasattr(self, '_avatar'):
@@ -475,6 +650,9 @@ class AvatarStudio(ShowBase):
         )
         
         # 1. Root Translation
+        # Keep the avatar locomotion on the floor. MediaPipe root_y is screen/body
+        # height, not a stable Panda3D ground height, so using it directly makes
+        # the whole character float above the grid.
         root = pose_state['root']
         scale = 8.0
         root_x = float(root.get('x', mid_hip['x'])) * scale
@@ -497,7 +675,11 @@ class AvatarStudio(ShowBase):
         self._avatar_root.setPos(
             self._last_root_pos[0],
             self._last_root_pos[1],
-            self._last_root_pos[2] + getattr(self, '_model_ground_offset', 0.0),
+            (
+                self._last_root_pos[2]
+                if ROOT_VERTICAL_ENABLED
+                else 0.0
+            ) + getattr(self, '_model_ground_offset', 0.0),
         )
         
         # 2. Capture Rest Data (Search for first "Clean" frame)
@@ -526,10 +708,22 @@ class AvatarStudio(ShowBase):
                     if avatar_rest_vec.length() < 1e-6:
                         avatar_rest_vec = Vec3(0, 0, 1)
                     avatar_rest_vec.normalize()
+
+                    rest_state = {
+                        'joints': joints,
+                        'mid_hip': mid_hip,
+                        'mid_sho': mid_sho,
+                    }
+                    human_rest_vec = make_segment_vector(rest_state, s_name, e_name)
+                    if human_rest_vec.length() < 1e-6:
+                        human_rest_vec = Vec3(0, 0, 1)
+                    human_rest_vec.normalize()
                     
                     self._bone_rest_data[b_name] = {
                         'initial_local_quat': b_np.getQuat(),
+                        'initial_render_quat': b_np.getQuat(self.render),
                         'avatar_rest_vec': avatar_rest_vec,
+                        'human_rest_vec': human_rest_vec,
                     }
                 print(f"[studio] Rest Pose captured at frame {frame_idx} (Avg Confidence: {avg_v:.2f})")
             else:
@@ -540,6 +734,7 @@ class AvatarStudio(ShowBase):
             print(f"[studio] Playback at frame {frame_idx}/{len(self._frames)}")
 
         # 3. Process Bones
+        debug_rows = []
         for bone_name, (start_name, end_name) in BONE_MAP.items():
             if DEBUG_ONLY_BONE and bone_name != DEBUG_ONLY_BONE:
                 continue
@@ -550,51 +745,87 @@ class AvatarStudio(ShowBase):
 
             bone_spec = get_bone_spec(bone_name)
 
-            # --- Human Pose Vector ---
-            if 'torso' in bone_name or 'Spine' in bone_name:
-                h_now_vec = make_segment_vector({'joints': {'__mid_hip__': mid_hip, '__mid_sho__': mid_sho}, 'mid_hip': mid_hip, 'mid_sho': mid_sho}, '__mid_hip__', '__mid_sho__')
-                conf = 1.0
-            else:
-                h_now_vec = make_segment_vector(pose_state, start_name, end_name)
-                conf = min(joints[start_name]['v'], joints[end_name]['v'])
-
-            avatar_rest_vec = rest_info.get('avatar_rest_vec')
-            if not avatar_rest_vec or h_now_vec.length() < 1e-6:
+            # --- Human Pose Delta ---
+            # The old path compared avatar bind-pose vectors directly to human
+            # world vectors. That makes the model move, but not replicate the
+            # action. Use the change from human rest pose to current pose.
+            h_now_vec = make_segment_vector(pose_state, start_name, end_name)
+            h_rest_vec = rest_info.get('human_rest_vec')
+            if not h_rest_vec or h_now_vec.length() < 1e-6:
                 continue
 
             h_now_vec.normalize()
+            conf = get_segment_confidence(pose_state, start_name, end_name)
+            if conf < MIN_SEGMENT_CONFIDENCE:
+                continue
 
             # --- Target Orientation ---
-            # Rotate the avatar's bind-pose bone direction to the current human segment direction.
             h_delta_quat = LQuaternionf()
-            h_axis = avatar_rest_vec.cross(h_now_vec)
-            h_angle = avatar_rest_vec.angleDeg(h_now_vec)
+            h_axis = h_rest_vec.cross(h_now_vec)
+            h_angle = h_rest_vec.angleDeg(h_now_vec)
             
             limit = bone_spec['limit']
             gain = bone_spec['gain']
-            final_angle = min(max(h_angle * gain, -limit), limit)
+            final_angle = min(max(h_angle * gain * ACTION_GAIN_MULTIPLIER, -limit), limit)
 
             if bone_spec.get('invert'):
                 final_angle = -final_angle
+
+            if frame_idx % DEBUG_LOG_INTERVAL_FRAMES == 0:
+                debug_rows.append({
+                    'frame_idx': frame_idx,
+                    'timestamp_ms': frame['timestamp_ms'],
+                    'bone_name': bone_name,
+                    'start_joint': start_name,
+                    'end_joint': end_name,
+                    'confidence': round(float(conf), 4),
+                    'human_delta_deg': round(float(h_angle), 4),
+                    'applied_angle_deg': round(float(final_angle), 4),
+                    'target_x': round(float(h_now_vec[0]), 5),
+                    'target_y': round(float(h_now_vec[1]), 5),
+                    'target_z': round(float(h_now_vec[2]), 5),
+                })
 
             if h_axis.length() > 1e-6:
                 h_axis.normalize()
                 h_delta_quat.setFromAxisAngle(final_angle, h_axis)
 
-            # Apply delta to the initial local orientation.
-            target_local_q = h_delta_quat * rest_info['initial_local_quat']
+            # Apply the human delta in render space. Setting local joint quats
+            # directly compounds parent transforms and makes CesiumMan "dance"
+            # instead of following the captured segment directions.
+            target_render_q = h_delta_quat * rest_info['initial_render_quat']
 
-            # Smoothly transition in local joint space.
-            alpha = bone_spec['alpha'] if conf > 0.5 else bone_spec['alpha'] * 0.4
-            current_local_q = bone_np.getQuat()
-            smooth_local_q = current_local_q * (1.0 - alpha) + target_local_q * alpha
-            smooth_local_q.normalize()
+            # Smoothly transition in render space.
+            alpha = bone_spec['alpha'] if conf > 0.5 else bone_spec['alpha'] * 0.75
+            current_render_q = bone_np.getQuat(self.render)
+            smooth_render_q = current_render_q * (1.0 - alpha) + target_render_q * alpha
+            smooth_render_q.normalize()
 
-            bone_np.setQuat(smooth_local_q)
+            bone_np.setQuat(self.render, smooth_render_q)
 
         self._avatar.update()
+        if GROUND_LOCK_ENABLED:
+            self._lock_avatar_to_ground()
         if SHOW_DEBUG_SKELETON:
             self._draw_debug_skeleton(joints, mid_hip, mid_sho)
+        self._write_debug_rows(debug_rows)
+        self._capture_debug_screenshot(frame_idx)
+
+    def _lock_avatar_to_ground(self):
+        """Nudge the avatar root so the rendered model rests on the grid floor."""
+        if not hasattr(self, '_avatar_root') or not self._avatar_root:
+            return
+
+        bounds = self._avatar_root.getTightBounds()
+        if not bounds:
+            return
+
+        min_pt, _ = bounds
+        ground_delta = -float(min_pt[2])
+        if abs(ground_delta) < 1e-4:
+            return
+
+        self._avatar_root.setZ(self._avatar_root.getZ() + ground_delta)
 
     def _draw_debug_skeleton(self, joints, mid_hip, mid_sho):
         from panda3d.core import LineSegs
@@ -603,14 +834,23 @@ class AvatarStudio(ShowBase):
         ls.setThickness(2.0)
         s = 3.0 # Larger debug skeleton
         def p(j): return Vec3(j['x']*s, -j['z']*s, -j['y']*s)
+        def joint_for_name(name):
+            if name == '__mid_hip__':
+                return mid_hip
+            if name == '__mid_sho__':
+                return mid_sho
+            return joints.get(name)
+
         ls.setColor(1, 1, 0, 1)
         ls.moveTo(p(mid_hip))
         ls.drawTo(p(mid_sho))
         ls.setColor(0, 1, 1, 1)
         for _, (start, end) in BONE_MAP.items():
-            if isinstance(start, str) and isinstance(end, str):
-                ls.moveTo(p(joints[start]))
-                ls.drawTo(p(joints[end]))
+            start_joint = joint_for_name(start)
+            end_joint = joint_for_name(end)
+            if start_joint and end_joint:
+                ls.moveTo(p(start_joint))
+                ls.drawTo(p(end_joint))
         self._debug_np.attachNewNode(ls.create())
 
 

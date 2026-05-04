@@ -55,3 +55,21 @@ Tracks architecture/documentation changes made in this repository.
     - `Pillow` (Tkinter image display path in `main_gui.py`)
     - `torch` (GPU/runtime checks and triangulation support)
     - `torchvision` (GPU JPEG decode helpers in `main_gui.py`)
+
+## 2026-05-04
+
+### Entry 006
+- **Scope:** Documentation synchronization with current repository runtime config.
+- **Source of truth used:** `config.py` in active repo + current runtime notes in `main_gui.py`, `src/master_coordinator.py`, and `src/camera_server.py`.
+- **Changes made:**
+  - Updated `SYSTEM_ARCHITECTURE.md` stale config references to current values:
+    - `SYNC_TIME_THRESHOLD_MS = 200.0`
+    - `SYNC_DYNAMIC_THRESHOLD_ENABLED = False`
+    - `FRAME_BUFFER_SIZE = 30`
+    - `STALE_FRAME_TIMEOUT_MS = 5000`
+    - `NETWORK_JPEG_QUALITY = 30`
+  - Updated `docs/DOCUMENTATION.md` to match current network and sync settings:
+    - `NETWORK_JPEG_QUALITY = 30`
+    - Sync tolerance/buffer/timeout values updated to `200.0 / 30 / 5000`
+    - Network bandwidth estimate text aligned with JPEG quality 30.
+- **Notes:** Historical values remain in `CHANGES.md` as timeline snapshots and are intentionally not rewritten.

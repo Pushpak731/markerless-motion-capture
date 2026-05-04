@@ -2023,7 +2023,7 @@ All face metrics are **unitless ratios** normalized by interpupillary distance (
 | **~500 MB RAM** (FULL model) | MediaPipe loads pose (9 MB) + face (5 MB) + hand (12 MB) models into GPU/CPU memory, plus OpenCV frame buffers (1280×720×3 = 2.7 MB/frame × 3 pipeline stages), plus ZMQ send/receive buffers | Disabling face/hand detection saves ~100 MB. Using LITE model saves ~200 MB. |
 | **40–60% single-core CPU** | MediaPipe inference (15–25 ms/frame), OpenCV preprocessing (2–5 ms), metric calculations (1–2 ms), visualization overlay (1–3 ms), all on the main thread | ROI cropping reduces inference cost by ~40%. Frame skip trades accuracy for CPU. |
 | **GPU memory (optional)** | When Metal (macOS) or CUDA (Linux/Windows) delegates are active: model weights + inference workspace ≈ 200–400 MB VRAM. Face mesh is the largest GPU consumer. | Disabling `ENABLE_FACE_DETECTION` reduces GPU memory by ~30%. |
-| **Network bandwidth** | Each frame packet: ~15 KB (JPEG at quality 35) + ~2 KB (landmarks) ≈ 17 KB × 30 fps ≈ **500 KB/s** per camera | Lower `NETWORK_JPEG_QUALITY` or reduce `NETWORK_STREAM_WIDTH` for slower networks. |
+| **Network bandwidth** | Each frame packet: ~12-15 KB (JPEG at quality 30) + ~2 KB (landmarks) ≈ 14-17 KB x 30 fps ≈ **420-510 KB/s** per camera | Lower `NETWORK_JPEG_QUALITY` or reduce `NETWORK_STREAM_WIDTH` for slower networks. |
 
 ### Key Optimizations
 
@@ -2033,7 +2033,7 @@ All face metrics are **unitless ratios** normalized by interpupillary distance (
 | Frame skip | Linear FPS boost | `FRAME_SKIP = N` |
 | LITE model | 2× FPS vs FULL | `POSE_MODEL_COMPLEXITY = 'LITE'` |
 | GPU delegate (Metal/CUDA) | 20–50% faster inference | `INFERENCE_BACKEND = 'mps'` |
-| Network JPEG compression | 60–80% bandwidth reduction | `NETWORK_JPEG_QUALITY = 35` |
+| Network JPEG compression | 60–80% bandwidth reduction | `NETWORK_JPEG_QUALITY = 30` |
 | ZMQ CONFLATE | Prevents queue buildup | Always enabled |
 | Background DB writer | Non-blocking recording | Automatic (50-frame batches) |
 | Frame coalescing (GUI) | Prevents UI lag | Automatic |
@@ -2610,13 +2610,13 @@ Calibration JSON (per camera) includes:
 ### 23.6 Sync Tolerance Specification (Numerical)
 
 From `config.py`:
-- `SYNC_TIME_THRESHOLD_MS = 100.0`
-- `FRAME_BUFFER_SIZE = 10`
-- `STALE_FRAME_TIMEOUT_MS = 2000`
+- `SYNC_TIME_THRESHOLD_MS = 200.0`
+- `FRAME_BUFFER_SIZE = 30`
+- `STALE_FRAME_TIMEOUT_MS = 5000`
 
 Interpretation:
-- Frames are considered sync-compatible if timestamp spread is within 100 ms.
-- Stale frames older than 2 s against newest global frame are evicted.
+- Frames are considered sync-compatible if timestamp spread is within 200 ms.
+- Stale frames older than 5 s against newest global frame are evicted.
 
 ### 23.7 Reprojection Threshold Policy (Unified)
 
