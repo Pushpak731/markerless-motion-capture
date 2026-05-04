@@ -114,6 +114,19 @@ MAX_LINEAR_VELOCITY = 6.0   # Maximum limb velocity (m/s) - sanity check
 SMOOTHING_ALPHA_DEFAULT = 0.5   # Default EMA alpha for metrics
 SMOOTHING_ALPHA_FACE = 0.3      # Stronger smoothing for facial metrics
 
+# Extended kinematics
+ENABLE_EXTENDED_KINEMATICS = True
+KINEMATICS_SMOOTHING_ENABLED = True
+KINEMATICS_SMOOTHING_METHOD = 'ema_velocity'
+KINEMATICS_SMOOTHING_ALPHA = 0.5
+ENABLE_KINEMATICS_VECTOR_COMPONENTS = True
+ENABLE_JERK_METRICS = False
+KINEMATICS_VISIBILITY_THRESHOLD = 0.5
+KINEMATICS_MAX_LINEAR_VELOCITY = 6.0
+KINEMATICS_MAX_LINEAR_ACCELERATION = 80.0
+KINEMATICS_MAX_ANGULAR_VELOCITY = 720.0
+KINEMATICS_MAX_ANGULAR_ACCELERATION = 5000.0
+
 # Bone Length Stabilization
 BONE_LENGTH_CALIBRATION_FRAMES = 30  # Number of frames used to learn fixed reference lengths
 MIN_VALID_BONES_PER_CALIBRATION_FRAME = 5 # Minimum valid bones required to count frame for calibration
@@ -331,4 +344,3 @@ ABLATION_DISABLE_DISPLAY_THROTTLE = False  # True → redraw display every frame
 ABLATION_DISABLE_PHOTO_REUSE      = False  # True → new PhotoImage each Tk poll tick
 ABLATION_DISABLE_CLAHE_DEL        = False  # True → skip explicit del of CLAHE intermediates
 ABLATION_RSS_LOG_INTERVAL         = 60     # print [ABLATION] RSS line every N frames (0 = off)
-

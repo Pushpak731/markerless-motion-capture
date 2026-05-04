@@ -8,6 +8,7 @@ from src.visualizer import Visualizer
 from src.database import MocapDB
 from src.pose_corrector import PoseCorrector
 from src.calculations import Calculations, BoneLengthTracker
+from src.kinematics import KinematicsTracker
 from config import DRAW_LANDMARKS
 
 class VideoStreamer:
@@ -22,6 +23,7 @@ class VideoStreamer:
         self.output_frame = None
         self.latest_metrics = {}
         self.bone_tracker = BoneLengthTracker()
+        self.kinematics_tracker = KinematicsTracker()
         # Kinematics State
         self.prev_lm = []
         self.prev_metrics = {}
@@ -81,6 +83,7 @@ class VideoStreamer:
                     bone_result = self.bone_tracker.process(lm_dict, world_dict)
                     bone_metrics = bone_result.get('metrics', {})
                     smoothed_lm = bone_result.get('smoothed_landmarks') or lm_dict
+                    coordinate_space = bone_result.get('source_name', 'world' if world_dict else 'normalized')
                     
                     # Face Metrics
                     face_metrics = {}
@@ -90,16 +93,19 @@ class VideoStreamer:
                         flm_dict = [{'x': lm.x, 'y': lm.y, 'z': lm.z} for lm in flm]
                         face_metrics = Calculations.get_face_metrics(flm_dict)
                         
-                        current_metrics = Calculations.filter_and_smooth({**angle_metrics, **bone_metrics, **face_metrics}, self.prev_metrics)
+                    current_metrics = Calculations.filter_and_smooth({**angle_metrics, **bone_metrics, **face_metrics}, self.prev_metrics)
                     # -------------------------------------------------
                     
                     # Kinematics
                     now = time.time()
-                    if self.prev_time is not None:
-                        dt = now - self.prev_time
-                        if dt > 0:
-                            kinematics = Calculations.get_kinematics(smoothed_lm, self.prev_lm, current_metrics, self.prev_metrics, dt)
-                            current_metrics.update(kinematics)
+                    current_metrics.update(
+                        self.kinematics_tracker.process(
+                            smoothed_lm,
+                            current_metrics,
+                            now * 1000.0,
+                            coordinate_space=coordinate_space,
+                        )
+                    )
                     
                     # Update State
                         self.prev_lm = smoothed_lm

@@ -33,6 +33,32 @@ CSV_BONE_FIELDS = [
     'Hip',
 ]
 
+CSV_ANGLE_FIELDS = [
+    'Angle_Elbow_L',
+    'Angle_Elbow_R',
+    'Angle_Shoulder_L',
+    'Angle_Shoulder_R',
+    'Angle_Hip_L',
+    'Angle_Hip_R',
+    'Angle_Knee_L',
+    'Angle_Knee_R',
+]
+
+CSV_TRACKED_JOINTS = [
+    'Shoulder_L',
+    'Shoulder_R',
+    'Elbow_L',
+    'Elbow_R',
+    'Wrist_L',
+    'Wrist_R',
+    'Hip_L',
+    'Hip_R',
+    'Knee_L',
+    'Knee_R',
+    'Ankle_L',
+    'Ankle_R',
+]
+
 
 def _pick_writer(path: str, fps: float, width: int, height: int):
     import cv2
@@ -55,6 +81,7 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
     from src.calculations import Calculations, BoneLengthTracker
     from src.detector import MocapDetector
     from src.frame_quality import FrameQualityAnalyzer, FrameQuality, clone_landmarks, interpolate_landmarks, make_pose_output
+    from src.kinematics import KinematicsTracker
     from src.pose_corrector import PoseCorrector
     from src.visualizer import Visualizer
 
@@ -74,6 +101,7 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
     corrector = PoseCorrector()
     visualizer = Visualizer()
     bone_tracker = BoneLengthTracker()
+    kinematics_tracker = KinematicsTracker()
 
     stats = {
         'input_path': input_path,
@@ -196,6 +224,35 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
     # Reference lengths exported for debugging reference updates
     for bone_name in CSV_BONE_FIELDS:
         csv_header.append(f'Reference_Length_{bone_name}')
+    csv_header.extend(CSV_ANGLE_FIELDS)
+    for angle_name in CSV_ANGLE_FIELDS:
+        csv_header.extend([
+            f'Velocity_{angle_name}',
+            f'Acceleration_{angle_name}',
+        ])
+    for joint_name in CSV_TRACKED_JOINTS:
+        csv_header.append(f'Velocity_{joint_name}')
+        csv_header.extend([
+            f'Velocity_{joint_name}_X',
+            f'Velocity_{joint_name}_Y',
+            f'Velocity_{joint_name}_Z',
+            f'Acceleration_{joint_name}',
+            f'Acceleration_{joint_name}_X',
+            f'Acceleration_{joint_name}_Y',
+            f'Acceleration_{joint_name}_Z',
+        ])
+    csv_header.extend([
+        'Jerk_Wrist_L',
+        'Jerk_Wrist_R',
+        'Jerk_Ankle_L',
+        'Jerk_Ankle_R',
+        'Coordinate_Space',
+        'Kinematics_Smoothing_Enabled',
+        'Kinematics_Smoothing_Method',
+        'Kinematics_Smoothing_Alpha',
+    ])
+    for landmark_idx in range(33):
+        csv_header.append(f'visibility_{landmark_idx}')
     csv_writer.writerow(csv_header)
 
     def _percentile(values, pct):
@@ -289,6 +346,22 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
                 'variance_lengths': {},
                 'stddev_lengths': {},
             }
+
+        kinematic_landmarks = bone_result.get('smoothed_landmarks') if bone_result else None
+        if not kinematic_landmarks:
+            kinematic_landmarks = world_lm if world_lm else pose_lm
+        coordinate_space = bone_result.get('source_name', 'world' if world_lm else 'normalized') if bone_result else (
+            'world' if world_lm else 'normalized'
+        )
+        angle_metrics = Calculations.get_joint_angles(kinematic_landmarks) if kinematic_landmarks else {}
+        extended_kinematics = {}
+        if kinematic_landmarks:
+            extended_kinematics = kinematics_tracker.process(
+                kinematic_landmarks,
+                angle_metrics,
+                timestamp_local,
+                coordinate_space=coordinate_space,
+            )
 
         if getattr(quality, 'pose_usable', False):
             consistency_scores.append(float(bone_result.get('consistency_score', 0.0)))
@@ -413,6 +486,41 @@ def process_video(input_path: str, output_path: str, max_frames: int = 0) -> dic
         ref_map = bone_result.get('reference_lengths', {}) if bone_result else {}
         for bone_name in CSV_BONE_FIELDS:
             row.append(float(ref_map.get(f'Reference_Length_{bone_name}', 0.0)) if ref_map else 0.0)
+        for angle_name in CSV_ANGLE_FIELDS:
+            row.append(float(angle_metrics.get(angle_name, 0.0)))
+        for angle_name in CSV_ANGLE_FIELDS:
+            row.extend([
+                float(extended_kinematics.get(f'Velocity_{angle_name}', 0.0)),
+                float(extended_kinematics.get(f'Acceleration_{angle_name}', 0.0)),
+            ])
+        for joint_name in CSV_TRACKED_JOINTS:
+            row.append(float(extended_kinematics.get(f'Velocity_{joint_name}', 0.0)))
+            row.extend([
+                float(extended_kinematics.get(f'Velocity_{joint_name}_X', 0.0)),
+                float(extended_kinematics.get(f'Velocity_{joint_name}_Y', 0.0)),
+                float(extended_kinematics.get(f'Velocity_{joint_name}_Z', 0.0)),
+                float(extended_kinematics.get(f'Acceleration_{joint_name}', 0.0)),
+                float(extended_kinematics.get(f'Acceleration_{joint_name}_X', 0.0)),
+                float(extended_kinematics.get(f'Acceleration_{joint_name}_Y', 0.0)),
+                float(extended_kinematics.get(f'Acceleration_{joint_name}_Z', 0.0)),
+            ])
+        row.extend([
+            float(extended_kinematics.get('Jerk_Wrist_L', 0.0)),
+            float(extended_kinematics.get('Jerk_Wrist_R', 0.0)),
+            float(extended_kinematics.get('Jerk_Ankle_L', 0.0)),
+            float(extended_kinematics.get('Jerk_Ankle_R', 0.0)),
+            extended_kinematics.get('Coordinate_Space', coordinate_space),
+            bool(extended_kinematics.get('Kinematics_Smoothing_Enabled', False)),
+            extended_kinematics.get('Kinematics_Smoothing_Method', ''),
+            float(extended_kinematics.get('Kinematics_Smoothing_Alpha', 0.0)),
+        ])
+        vis_source = kinematic_landmarks or []
+        for landmark_idx in range(33):
+            if landmark_idx < len(vis_source):
+                item = vis_source[landmark_idx]
+                row.append(float(item.get('v', item.get('visibility', 0.0))) if isinstance(item, dict) else 0.0)
+            else:
+                row.append(0.0)
         csv_writer.writerow(row)
 
         # --- Write raw 3D world node coordinates ---

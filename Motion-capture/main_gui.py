@@ -87,6 +87,7 @@ from src.visualizer_3d import Visualizer3D
 from src.report_generator import ReportGenerator
 from src.pose_corrector import PoseCorrector
 from src.calculations import Calculations, BoneLengthTracker
+from src.kinematics import KinematicsTracker
 import config
 from config import (
     DRAW_LANDMARKS, MULTI_CAMERA_MODE, REMOTE_CAMERA_IP,
@@ -203,6 +204,7 @@ class MocapGUI:
             'local_cam': {'prev_lm': [], 'prev_metrics': {}, 'prev_time': None}
         }
         self._bone_trackers = {}
+        self._kinematics_trackers = {}
         self.latest_local_metrics = {}
         self.latest_remote_metrics = {}
         self.latest_quality = {}
@@ -1793,6 +1795,7 @@ class MocapGUI:
         bone_result = bone_tracker.process(pose_lm, world_lm)
         bone_metrics = bone_result.get('metrics', {})
         smoothed_landmarks = bone_result.get('smoothed_landmarks') or source_landmarks
+        coordinate_space = bone_result.get('source_name', 'world' if world_lm else 'normalized')
 
         world_metrics = {}
         face_metrics = Calculations.get_face_metrics(face_lm) if face_lm else {}
@@ -1806,13 +1809,15 @@ class MocapGUI:
         metrics = Calculations.filter_and_smooth(combined_metrics, state['prev_metrics'])
 
         now = time.time()
-        if state['prev_time'] is not None:
-            dt = now - state['prev_time']
-            if dt > 0:
-                kinematics = Calculations.get_kinematics(
-                    smoothed_landmarks, state['prev_lm'], metrics, state['prev_metrics'], dt
-                )
-                metrics.update(kinematics)
+        kinematics_tracker = self._kinematics_trackers.setdefault(camera_key, KinematicsTracker())
+        metrics.update(
+            kinematics_tracker.process(
+                smoothed_landmarks,
+                metrics,
+                now * 1000.0,
+                coordinate_space=coordinate_space,
+            )
+        )
 
         state['prev_lm'] = smoothed_landmarks
         state['prev_metrics'] = metrics
