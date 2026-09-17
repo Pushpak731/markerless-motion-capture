@@ -91,7 +91,7 @@ Genuine outputs of the offline validation pipeline on two recorded trials:
 | Limb symmetry | 66.9% (angle) | 4.9% (frontal) | PERSPECTIVE |
 | Reliability score | 72.4 / 100 | 48.1 / 100 | RELIABLE |
 
-| Figure 1 — dashboard | Figure 2 — symmetry analysis |
+| Video 1 — dashboard | Video 1 — symmetry analysis |
 |---|---|
 | ![Dashboard](Motion-capture/analysis_results/fig1_dashboard.png) | ![Symmetry](Motion-capture/analysis_results/fig1_symmetry.png) |
 
