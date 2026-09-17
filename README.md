@@ -1,32 +1,47 @@
-# Motion Capture System
+# Markerless 3D Motion Capture & Avatar Studio
 
-Active implementation for the motion-capture workspace.
+Real-time multi-camera markerless 3D motion capture on commodity hardware — MediaPipe pose estimation, confidence-weighted 3D reconstruction, kinematic analytics, and live avatar retargeting, backed by a full offline validation suite.
 
-This folder contains the live app, launchers, and the metric pipeline that now supports webcam, phone, and offline video verification inputs.
+![Architecture](docs/screenshots/architecture-overview.png)
 
-## Current capabilities
+> **Team project** built during an internship — see [Contributors](../../graphs/contributors) for authorship. Core pipeline development and commit history by the internship team; repository hosted on this account.
 
-- single-camera capture from a webcam, phone/IP stream, or local video file
-- multi-camera server/master capture for synchronized 3D reconstruction
-- offline annotation export for verification videos
-- zero-latency 2D visual tracking decoupled from strictly stabilized 3D physics metrics
-- HEAVY pose model complexity enabled by default for maximum accuracy
-- per-landmark correction metadata exported in offline validation CSVs
-- bone-length stabilization with stateful tracking and world-space preference
-- live Tkinter dashboard plus web frontend support
+## Capabilities
+
+### Capture
+- Single-camera capture from a **webcam, phone/IP stream, or local video file**
+- **Multi-camera server/master** setup for synchronized 3D reconstruction over the network
+- Zero-latency 2D visual tracking, decoupled from strictly stabilized 3D physics metrics
+
+### 3D pipeline
+- **MediaPipe HEAVY** pose inference for high-accuracy joint tracking
+- **Bone-length stabilization** with stateful tracking and world-space preference
+- **OneEuro smoothing** — responsive jitter reduction without motion lag
+- **Perspective-aware reliability engine** that classifies angle vs. error and raises smart warnings
+
+### Studio & visualization
+- Live **Tkinter dashboard** plus a **React/Three.js** web frontend
+- **Panda3D desktop 3D Avatar Studio** — hardware-accelerated GLB retargeting to Mixamo-standard rigs, with play/pause and frame-step controls
+
+### Validation suite
+- Offline annotation export with per-landmark correction metadata
+- **8-chart diagnostics**: bone variance, jitter, symmetry, visibility, FPS, and more
+- **11-point automated quality gate** (balanced + strict) for athletic trials
+- Automatic `faststart` re-encoding for mobile sharing
 
 ## Quick start
 
 ```bash
+cd Motion-capture
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 python main_gui.py
 ```
 
-## Camera sources
+### Camera sources
 
-Use `--camera-source` with the launcher when you want anything other than the default webcam:
+Use `--camera-source` with the launcher for anything other than the default webcam:
 
 ```bash
 # Webcam
@@ -39,7 +54,7 @@ python launch_multi_camera.py --mode single --camera-source http://<PHONE_IP>:80
 python launch_multi_camera.py --mode single --camera-source path/to/video.mp4
 ```
 
-## Multi-camera mode
+### Multi-camera mode
 
 ```bash
 # Server laptop
@@ -49,7 +64,7 @@ python launch_multi_camera.py --mode server
 python launch_multi_camera.py --mode master --remote-ip <SERVER_IP>
 ```
 
-See [docs/SETUP.md](docs/SETUP.md) for the full network and firewall setup.
+See [Motion-capture/docs/SETUP.md](Motion-capture/docs/SETUP.md) for the full network and firewall setup.
 
 ## Validation workflow
 
@@ -57,93 +72,39 @@ See [docs/SETUP.md](docs/SETUP.md) for the full network and firewall setup.
 2. Export an annotated video with `tools/process_video.py` when checking metric stability.
 3. Use `tools/validate_session.py` and `tools/compare_angles.py` for database-backed sessions.
 
-### One-command Linux verification
-
-Run the full offline pipeline plus automated quality checks directly with:
+One-command Linux verification (full offline pipeline + automated quality checks):
 
 ```bash
 scripts/run_offline_validation_linux.sh "/absolute/path/to/video.mp4"
 ```
 
-Script path:
+This performs venv dependency setup, model file checks/download, a Python syntax sweep, offline video annotation export, and automated quality gate reports (balanced + strict).
 
-- `scripts/run_offline_validation_linux.sh`
+## Trial results
 
-It performs:
-
-1. Local venv dependency setup
-2. Model file checks/download
-3. Python syntax sweep
-4. Offline video annotation export
-5. Automated quality gate reports (balanced + strict)
-
-# 💎 3D Motion Capture & Avatar Studio
-
-A high-fidelity 3D motion capture and avatar retargeting system. This project evolves raw 2D video input into stabilized 3D skeletal data capable of driving complex character rigs in real-time.
-
----
-
-## 🌟 Key Capabilities
-
-### 1. **Intelligence Pipeline**
-*   **MediaPipe HEAVY Inference:** Sub-pixel joint tracking using deep neural networks.
-*   **Skeletal Constraints:** Biomechanically accurate bone length preservation (max 15% deviation).
-*   **OneEuro Smoothing:** Ultra-responsive jitter reduction without motion lag.
-*   **Reliability Engine:** Perspective-aware error classification (Angle vs. Error).
-
-### 2. **3D Avatar Studio**
-*   **Native Desktop App:** Hardware-accelerated GLB retargeting using **Panda3D**.
-*   **Skeletal Mapping:** Automatic retargeting to Mixamo-standard character rigs.
-*   **WebGL Dashboard:** Integrated React/Three.js studio for cloud-based visualization.
-
-### 3. **Validation Suite**
-*   **8-Chart Diagnostic:** Comprehensive analysis of bone variance, jitter, symmetry, and FPS.
-*   **WhatsApp Compatible:** Automatic `faststart` re-encoding for instant mobile forwarding.
-*   **Quality Gate:** 11-point automated pass/fail verification for athletic trials.
-
----
-
-## 🏃‍♂️ Quick Start (Local Studio)
-
-1.  **Generate MoCap Data:**
-    ```bash
-    bash scripts/run_offline_validation_linux.sh "your_video.mp4"
-    ```
-2.  **Launch 3D Avatar Studio:**
-    ```bash
-    python tools/local_3d_studio.py
-    ```
-3.  **Controls:**
-    - `Space`: Play/Pause
-    - `Arrow Keys`: Step frame-by-frame
-    - `R`: Restart trial
-
----
-
-## 📊 Latest Trial Results
+Genuine outputs of the offline validation pipeline on two recorded trials:
 
 | Metric | Video 1 (May 01) | Video 2 (May 03) | Status |
 |---|---|---|---|
-| **Pose Coverage** | 100% | 91% | ✅ PASS |
-| **Bone Variance** | 0.0003 | 0.0002 | 💎 EXCELLENT |
-| **Limb Symmetry** | 66.9% (Angle) | 4.9% (Frontal) | ⚠️ PERSPECTIVE |
-| **Reliability Score** | 72.4 / 100 | 48.1 / 100 | ✅ RELIABLE |
+| Pose coverage | 100% | 91% | PASS |
+| Bone variance | 0.0003 | 0.0002 | EXCELLENT |
+| Limb symmetry | 66.9% (angle) | 4.9% (frontal) | PERSPECTIVE |
+| Reliability score | 72.4 / 100 | 48.1 / 100 | RELIABLE |
 
-### Diagnostic Analysis (Fig 1 & Fig 2)
+| Figure 1 — dashboard | Figure 2 — symmetry analysis |
+|---|---|
+| ![Dashboard](Motion-capture/analysis_results/fig1_dashboard.png) | ![Symmetry](Motion-capture/analysis_results/fig1_symmetry.png) |
 
-![Dashboard](analysis_results/fig1_dashboard.png)
-*Figure 1: Comprehensive summary of Video 1 trial.*
+## Project structure
 
-![Symmetry](analysis_results/fig1_symmetry.png)
-*Figure 2: Perspective-aware symmetry analysis (clustering indicates stable angle).*
+```
+Motion-capture/
+├── src/           core stabilization logic (calculations, detector, pose corrector)
+├── tools/         offline processing (ReliabilityEngine, ProcessVideo, Local3DStudio)
+├── frontend/      web-based 3D dashboard (React, Three.js)
+├── scripts/       automation + one-command validation
+├── tests/         unit and integration tests
+└── docs/          SETUP, WORKFLOW_FLOW, DATABASE_SCHEMA, coordinate system spec
+```
 
----
-
-## 📂 Project Architecture
-
-- **`src/`**: Core stabilization logic (Calculations, Detector, PoseCorrector).
-- **`tools/`**: Offline processing utilities (ReliabilityEngine, ProcessVideo, LocalStudio).
-- **`frontend/`**: Web-based 3D dashboard (React, Three.js).
-- **`scripts/`**: Automation and deployment scripts.
-
-See [docs/WORKFLOW_FLOW.md](docs/WORKFLOW_FLOW.md) for a technical deep-dive into the pipeline.
+A technical deep-dive into the pipeline is in [Motion-capture/docs/WORKFLOW_FLOW.md](Motion-capture/docs/WORKFLOW_FLOW.md); the system architecture lives in [docs/architecture.mmd](docs/architecture.mmd) with rendered diagrams in [docs/screenshots/](docs/screenshots/).
